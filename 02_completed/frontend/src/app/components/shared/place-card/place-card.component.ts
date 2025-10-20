@@ -4,10 +4,9 @@ import { Place } from '../../../models/travel.models';
 import { ChipComponent } from '../chip/chip.component';
 
 @Component({
-  selector: 'app-place-card',
-  standalone: true,
-  imports: [CommonModule, ChipComponent],
-  template: `
+    selector: 'app-place-card',
+    imports: [CommonModule, ChipComponent],
+    template: `
     <div class="rounded-2xl border overflow-hidden bg-white hover:shadow-lg transition-all">
       <!-- Image Placeholder -->
       <div class="h-32 bg-gradient-to-br from-blue-100 to-blue-50 grid place-items-center text-gray-400">
@@ -57,7 +56,7 @@ import { ChipComponent } from '../chip/chip.component';
       </div>
     </div>
   `,
-  styles: [`
+    styles: [`
     .line-clamp-2 {
       display: -webkit-box;
       -webkit-line-clamp: 2;

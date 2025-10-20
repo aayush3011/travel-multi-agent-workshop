@@ -4,11 +4,10 @@ import { TravelApiService } from '../../services/travel-api.service';
 import { Trip } from '../../models/travel.models';
 
 @Component({
-  selector: 'app-trips',
-  standalone: true,
-  imports: [CommonModule],
-  templateUrl: './trips.component.html',
-  styleUrls: ['./trips.component.css']
+    selector: 'app-trips',
+    imports: [CommonModule],
+    templateUrl: './trips.component.html',
+    styleUrls: ['./trips.component.css']
 })
 export class TripsComponent implements OnInit {
   trips: Trip[] = [];

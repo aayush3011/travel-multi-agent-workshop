@@ -5,11 +5,10 @@ import { TravelApiService } from '../../services/travel-api.service';
 import { Memory } from '../../models/travel.models';
 
 @Component({
-  selector: 'app-profile',
-  standalone: true,
-  imports: [CommonModule, FormsModule],
-  templateUrl: './profile.component.html',
-  styleUrls: ['./profile.component.css']
+    selector: 'app-profile',
+    imports: [CommonModule, FormsModule],
+    templateUrl: './profile.component.html',
+    styleUrls: ['./profile.component.css']
 })
 export class ProfileComponent implements OnInit {
   memories: Memory[] = [];

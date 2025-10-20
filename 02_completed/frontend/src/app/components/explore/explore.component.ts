@@ -8,11 +8,10 @@ import { PlaceCardComponent } from '../shared/place-card/place-card.component';
 import { MessageComponent } from '../shared/message/message.component';
 
 @Component({
-  selector: 'app-explore',
-  standalone: true,
-  imports: [CommonModule, FormsModule, PlaceCardComponent, MessageComponent],
-  templateUrl: './explore.component.html',
-  styleUrls: ['./explore.component.css']
+    selector: 'app-explore',
+    imports: [CommonModule, FormsModule, PlaceCardComponent, MessageComponent],
+    templateUrl: './explore.component.html',
+    styleUrls: ['./explore.component.css']
 })
 export class ExploreComponent implements OnInit, OnDestroy {
   places: Place[] = [];

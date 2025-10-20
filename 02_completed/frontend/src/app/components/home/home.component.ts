@@ -4,11 +4,10 @@ import { Router } from '@angular/router';
 import { ChipComponent } from '../shared/chip/chip.component';
 
 @Component({
-  selector: 'app-home',
-  standalone: true,
-  imports: [CommonModule, ChipComponent],
-  templateUrl: './home.component.html',
-  styleUrls: ['./home.component.css']
+    selector: 'app-home',
+    imports: [CommonModule, ChipComponent],
+    templateUrl: './home.component.html',
+    styleUrls: ['./home.component.css']
 })
 export class HomeComponent {
   trendingThemes = [

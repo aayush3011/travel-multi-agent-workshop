@@ -3,10 +3,9 @@ import { CommonModule } from '@angular/common';
 import { Message } from '../../../models/travel.models';
 
 @Component({
-  selector: 'app-message',
-  standalone: true,
-  imports: [CommonModule],
-  template: `
+    selector: 'app-message',
+    imports: [CommonModule],
+    template: `
     <div [ngClass]="message.role === 'user' ? 'justify-end' : 'justify-start'" class="flex gap-3">
       <!-- Assistant/System Avatar -->
       <div *ngIf="message.role !== 'user'" class="h-8 w-8 rounded-full bg-gray-200 grid place-items-center flex-shrink-0">
