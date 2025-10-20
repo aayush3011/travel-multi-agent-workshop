@@ -1,0 +1,190 @@
+<div class="max-w-7xl mx-auto px-4 py-6 fade-in">
+  <!-- Header -->
+  <div class="mb-6">
+    <h1 class="text-3xl font-bold tracking-tight">My Trips</h1>
+    <p class="text-gray-600 mt-2">View and manage your travel itineraries</p>
+  </div>
+
+  <!-- Trips List -->
+  <div *ngIf="!selectedTrip" class="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+    <div 
+      *ngFor="let trip of trips"
+      class="rounded-2xl border p-6 bg-white hover:shadow-lg transition cursor-pointer"
+      (click)="viewTrip(trip)"
+    >
+      <!-- Trip Header -->
+      <div class="flex items-start justify-between mb-4">
+        <div>
+          <h3 class="text-xl font-semibold">{{ trip.destination }}</h3>
+          <p class="text-sm text-gray-500 mt-1">
+            {{ formatDate(trip.startDate) }} - {{ formatDate(trip.endDate) }}
+          </p>
+        </div>
+        <span 
+          [ngClass]="getStatusBadgeClass(trip.status)"
+          class="px-2 py-1 text-xs rounded-full border font-medium"
+        >
+          {{ trip.status }}
+        </span>
+      </div>
+
+      <!-- Trip Summary -->
+      <div class="text-sm text-gray-600 space-y-1">
+        <div *ngIf="trip.days" class="flex items-center gap-2">
+          <span>📅</span>
+          <span>{{ trip.days.length }} days planned</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span>🗓️</span>
+          <span>Created {{ formatDate(trip.createdAt) }}</span>
+        </div>
+      </div>
+
+      <!-- Actions -->
+      <div class="mt-4 flex gap-2">
+        <button 
+          (click)="viewTrip(trip); $event.stopPropagation()"
+          class="flex-1 px-3 py-2 rounded-xl bg-cosmos-primary text-white hover:bg-blue-600 transition text-sm"
+        >
+          View Details
+        </button>
+        <button 
+          (click)="deleteTrip(trip); $event.stopPropagation()"
+          class="px-3 py-2 rounded-xl border border-red-300 text-red-600 hover:bg-red-50 transition text-sm"
+        >
+          Delete
+        </button>
+      </div>
+    </div>
+
+    <!-- Empty State -->
+    <div *ngIf="trips.length === 0" class="col-span-full text-center py-16">
+      <div class="text-6xl mb-4">✈️</div>
+      <h3 class="text-xl font-semibold mb-2">No trips yet</h3>
+      <p class="text-gray-600 mb-6">Start planning your next adventure!</p>
+      <a 
+        routerLink="/explore"
+        class="inline-block px-6 py-3 rounded-2xl bg-cosmos-primary text-white hover:bg-blue-600 transition"
+      >
+        Explore Destinations
+      </a>
+    </div>
+  </div>
+
+  <!-- Trip Details View -->
+  <div *ngIf="selectedTrip" class="space-y-6">
+    <!-- Back Button -->
+    <button 
+      (click)="closeTrip()"
+      class="flex items-center gap-2 text-cosmos-primary hover:underline"
+    >
+      ← Back to all trips
+    </button>
+
+    <!-- Trip Header -->
+    <div class="rounded-2xl border p-6 bg-white shadow-sm">
+      <div class="flex items-start justify-between">
+        <div>
+          <h2 class="text-2xl font-bold">{{ selectedTrip.destination }}</h2>
+          <p class="text-gray-600 mt-2">
+            {{ formatDate(selectedTrip.startDate) }} - {{ formatDate(selectedTrip.endDate) }}
+          </p>
+        </div>
+        <span 
+          [ngClass]="getStatusBadgeClass(selectedTrip.status)"
+          class="px-3 py-1 text-sm rounded-full border font-medium"
+        >
+          {{ selectedTrip.status }}
+        </span>
+      </div>
+    </div>
+
+    <!-- Day-by-Day Itinerary -->
+    <div *ngIf="selectedTrip.days && selectedTrip.days.length > 0" class="space-y-4">
+      <h3 class="text-xl font-semibold">Itinerary</h3>
+      
+      <div 
+        *ngFor="let day of selectedTrip.days"
+        class="rounded-2xl border p-6 bg-white shadow-sm"
+      >
+        <div class="flex items-center gap-3 mb-4">
+          <div class="h-10 w-10 rounded-full bg-cosmos-primary text-white grid place-items-center font-bold">
+            {{ day.dayNumber }}
+          </div>
+          <div>
+            <div class="font-semibold">Day {{ day.dayNumber }}</div>
+            <div class="text-sm text-gray-500">{{ formatDate(day.date) }}</div>
+          </div>
+        </div>
+
+        <div class="space-y-3 ml-13">
+          <!-- Morning -->
+          <div *ngIf="day.morning" class="flex gap-3 items-start">
+            <span class="text-2xl">🌅</span>
+            <div class="flex-1">
+              <div class="font-medium text-sm text-gray-500">Morning</div>
+              <div class="font-semibold">{{ day.morning.activity }}</div>
+              <div *ngIf="day.morning.time" class="text-xs text-gray-500">{{ day.morning.time }}</div>
+            </div>
+          </div>
+
+          <!-- Lunch -->
+          <div *ngIf="day.lunch" class="flex gap-3 items-start">
+            <span class="text-2xl">🍽️</span>
+            <div class="flex-1">
+              <div class="font-medium text-sm text-gray-500">Lunch</div>
+              <div class="font-semibold">{{ day.lunch.activity }}</div>
+              <div *ngIf="day.lunch.time" class="text-xs text-gray-500">{{ day.lunch.time }}</div>
+            </div>
+          </div>
+
+          <!-- Afternoon -->
+          <div *ngIf="day.afternoon" class="flex gap-3 items-start">
+            <span class="text-2xl">☀️</span>
+            <div class="flex-1">
+              <div class="font-medium text-sm text-gray-500">Afternoon</div>
+              <div class="font-semibold">{{ day.afternoon.activity }}</div>
+              <div *ngIf="day.afternoon.time" class="text-xs text-gray-500">{{ day.afternoon.time }}</div>
+            </div>
+          </div>
+
+          <!-- Dinner -->
+          <div *ngIf="day.dinner" class="flex gap-3 items-start">
+            <span class="text-2xl">🌃</span>
+            <div class="flex-1">
+              <div class="font-medium text-sm text-gray-500">Dinner</div>
+              <div class="font-semibold">{{ day.dinner.activity }}</div>
+              <div *ngIf="day.dinner.time" class="text-xs text-gray-500">{{ day.dinner.time }}</div>
+            </div>
+          </div>
+
+          <!-- Evening -->
+          <div *ngIf="day.evening" class="flex gap-3 items-start">
+            <span class="text-2xl">🌙</span>
+            <div class="flex-1">
+              <div class="font-medium text-sm text-gray-500">Evening</div>
+              <div class="font-semibold">{{ day.evening.activity }}</div>
+              <div *ngIf="day.evening.time" class="text-xs text-gray-500">{{ day.evening.time }}</div>
+            </div>
+          </div>
+
+          <!-- Accommodation -->
+          <div *ngIf="day.accommodation" class="flex gap-3 items-start">
+            <span class="text-2xl">🏨</span>
+            <div class="flex-1">
+              <div class="font-medium text-sm text-gray-500">Accommodation</div>
+              <div class="font-semibold">{{ day.accommodation.activity }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- No Days Planned -->
+    <div *ngIf="!selectedTrip.days || selectedTrip.days.length === 0" class="rounded-2xl border p-6 bg-white text-center">
+      <div class="text-4xl mb-4">📝</div>
+      <p class="text-gray-600">No itinerary details yet</p>
+      <p class="text-sm text-gray-500 mt-2">Chat with the concierge to plan your days</p>
+    </div>
+  </div>
+</div>

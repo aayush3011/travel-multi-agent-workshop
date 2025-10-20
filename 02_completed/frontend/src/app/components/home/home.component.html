@@ -1,0 +1,110 @@
+<div class="max-w-7xl mx-auto grid md:grid-cols-2 gap-8 items-center px-4 pt-10 pb-16 fade-in">
+  <!-- Left Column: Hero Text -->
+  <div>
+    <h1 class="text-4xl md:text-5xl font-bold tracking-tight leading-tight">
+      Plan like a local. <span class="text-cosmos-accent">Remembered</span> like a friend.
+    </h1>
+    <p class="mt-4 text-gray-600 max-w-prose text-lg">
+      A memory-first travel OS that learns your vibe and builds itineraries around what you love.
+    </p>
+    
+    <!-- CTA Buttons -->
+    <div class="mt-6 flex gap-3">
+      <button 
+        (click)="startTrip()"
+        class="px-5 py-2.5 rounded-2xl bg-cosmos-primary text-white hover:bg-blue-600 transition shadow-md hover:shadow-lg"
+      >
+        Start a trip
+      </button>
+      <button 
+        (click)="exploreCities()"
+        class="px-5 py-2.5 rounded-2xl border border-cosmos-primary text-cosmos-primary hover:bg-cosmos-primary hover:text-white transition"
+      >
+        Explore cities
+      </button>
+    </div>
+    
+    <!-- Trending Themes -->
+    <div class="mt-6 text-sm text-gray-500">Trending themes:</div>
+    <div class="mt-2 flex flex-wrap">
+      <app-chip *ngFor="let theme of trendingThemes" [text]="theme"></app-chip>
+    </div>
+  </div>
+  
+  <!-- Right Column: Hero Image -->
+  <div class="aspect-video rounded-3xl overflow-hidden border shadow-xl">
+    <img 
+      src="https://images.unsplash.com/photo-1468436139062-f60a71c5c892?q=80&w=1600&auto=format&fit=crop" 
+      alt="NYC skyline at dusk" 
+      class="h-full w-full object-cover hover:scale-105 transition-transform duration-500"
+    />
+  </div>
+</div>
+
+<!-- Features Section -->
+<div class="max-w-7xl mx-auto px-4 py-16">
+  <div class="text-center mb-12">
+    <h2 class="text-3xl font-bold">Why Cosmos Voyager?</h2>
+    <p class="text-gray-600 mt-2">AI-powered travel planning that understands you</p>
+  </div>
+  
+  <div class="grid md:grid-cols-3 gap-8">
+    <!-- Feature 1 -->
+    <div class="p-6 rounded-2xl border bg-white hover:shadow-lg transition">
+      <div class="text-4xl mb-4">🧠</div>
+      <h3 class="text-xl font-semibold mb-2">Memory-First</h3>
+      <p class="text-gray-600 text-sm">
+        Your preferences, dietary needs, and travel style are remembered across all trips. 
+        No need to repeat yourself.
+      </p>
+    </div>
+    
+    <!-- Feature 2 -->
+    <div class="p-6 rounded-2xl border bg-white hover:shadow-lg transition">
+      <div class="text-4xl mb-4">🤖</div>
+      <h3 class="text-xl font-semibold mb-2">Multi-Agent AI</h3>
+      <p class="text-gray-600 text-sm">
+        Specialized agents for hotels, dining, and activities work together to create 
+        the perfect itinerary.
+      </p>
+    </div>
+    
+    <!-- Feature 3 -->
+    <div class="p-6 rounded-2xl border bg-white hover:shadow-lg transition">
+      <div class="text-4xl mb-4">🗺️</div>
+      <h3 class="text-xl font-semibold mb-2">Smart Discovery</h3>
+      <p class="text-gray-600 text-sm">
+        Vector search finds places that match your vibe, not just keywords. 
+        Discover hidden gems.
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- How It Works -->
+<div class="max-w-7xl mx-auto px-4 py-16 bg-gradient-to-br from-blue-50 to-white rounded-3xl">
+  <div class="text-center mb-12">
+    <h2 class="text-3xl font-bold">How It Works</h2>
+    <p class="text-gray-600 mt-2">Three simple steps to your perfect trip</p>
+  </div>
+  
+  <div class="grid md:grid-cols-3 gap-8">
+    <div class="text-center">
+      <div class="inline-flex items-center justify-center w-12 h-12 rounded-full bg-cosmos-primary text-white font-bold mb-4">1</div>
+      <h3 class="font-semibold mb-2">Tell Us Your Vibe</h3>
+      <p class="text-sm text-gray-600">Share your preferences, dietary needs, and travel style through natural conversation.</p>
+    </div>
+    
+    <div class="text-center">
+      <div class="inline-flex items-center justify-center w-12 h-12 rounded-full bg-cosmos-primary text-white font-bold mb-4">2</div>
+      <h3 class="font-semibold mb-2">AI Finds Perfect Matches</h3>
+      <p class="text-sm text-gray-600">Our agents search and filter places that align with your preferences and memories.</p>
+    </div>
+    
+    <div class="text-center">
+      <div class="inline-flex items-center justify-center w-12 h-12 rounded-full bg-cosmos-primary text-white font-bold mb-4">3</div>
+      <h3 class="font-semibold mb-2">Get Your Itinerary</h3>
+      <p class="text-sm text-gray-600">Receive a personalized day-by-day plan that you can adjust and refine.</p>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,187 @@
+[
+    {
+        "id": "mem_tony_001",
+        "memoryId": "mem_tony_001",
+        "userId": "tony",
+        "tenantId": "default",
+        "memory_type": "declarative",
+        "text": "Tony prefers luxury hotels with modern amenities and rooftop bars",
+        "facets": {
+            "category": "hotel",
+            "preference": "luxury",
+            "amenities": "rooftop_bar,modern"
+        },
+        "salience": 0.9,
+        "justification": "User has consistently chosen high-end accommodations with premium features",
+        "embedding": [],
+        "createdAt": "2025-02-10T14:30:00Z",
+        "ttl": null
+    },
+    {
+        "id": "mem_tony_002",
+        "memoryId": "mem_tony_002",
+        "userId": "tony",
+        "tenantId": "default",
+        "memory_type": "procedural",
+        "text": "Tony always books hotels near tech hubs and innovation districts",
+        "facets": {
+            "category": "hotel",
+            "location_preference": "tech_district",
+            "behavior": "consistent"
+        },
+        "salience": 0.85,
+        "justification": "Behavioral pattern observed across multiple bookings",
+        "embedding": [],
+        "createdAt": "2025-03-05T09:15:00Z",
+        "ttl": null
+    },
+    {
+        "id": "mem_tony_003",
+        "memoryId": "mem_tony_003",
+        "userId": "tony",
+        "tenantId": "default",
+        "memory_type": "episodic",
+        "text": "Tony wants to visit Tokyo for the tech conference in November 2025",
+        "facets": {
+            "category": "trip",
+            "destination": "tokyo",
+            "purpose": "conference",
+            "timeframe": "november_2025"
+        },
+        "salience": 0.95,
+        "justification": "Recent conversation about upcoming Tokyo trip",
+        "embedding": [],
+        "createdAt": "2025-10-01T16:20:00Z",
+        "ttl": 7776000
+    },
+    {
+        "id": "mem_tony_004",
+        "memoryId": "mem_tony_004",
+        "userId": "tony",
+        "tenantId": "default",
+        "memory_type": "declarative",
+        "text": "Tony enjoys fine dining restaurants with Michelin stars",
+        "facets": {
+            "category": "dining",
+            "preference": "fine_dining",
+            "rating": "michelin_star"
+        },
+        "salience": 0.9,
+        "justification": "User explicitly stated preference for high-end dining experiences",
+        "embedding": [],
+        "createdAt": "2025-02-15T11:00:00Z",
+        "ttl": null
+    },
+    {
+        "id": "mem_tony_005",
+        "memoryId": "mem_tony_005",
+        "userId": "tony",
+        "tenantId": "default",
+        "memory_type": "procedural",
+        "text": "Tony prefers architectural landmarks and modern art museums over historical sites",
+        "facets": {
+            "category": "activity",
+            "preference": "architecture,modern_art",
+            "avoids": "historical"
+        },
+        "salience": 0.75,
+        "justification": "Pattern observed from activity selections",
+        "embedding": [],
+        "createdAt": "2025-04-20T13:45:00Z",
+        "ttl": null
+    },
+    {
+        "id": "mem_steve_001",
+        "memoryId": "mem_steve_001",
+        "userId": "steve",
+        "tenantId": "default",
+        "memory_type": "declarative",
+        "text": "Steve prefers classic, historic hotels with traditional charm",
+        "facets": {
+            "category": "hotel",
+            "preference": "historic",
+            "style": "traditional"
+        },
+        "salience": 0.9,
+        "justification": "User has expressed appreciation for vintage architecture and classic hospitality",
+        "embedding": [],
+        "createdAt": "2025-02-12T10:30:00Z",
+        "ttl": null
+    },
+    {
+        "id": "mem_steve_002",
+        "memoryId": "mem_steve_002",
+        "userId": "steve",
+        "tenantId": "default",
+        "memory_type": "procedural",
+        "text": "Steve always visits war memorials and history museums in every city",
+        "facets": {
+            "category": "activity",
+            "type": "museum,memorial",
+            "theme": "history,military",
+            "behavior": "always"
+        },
+        "salience": 0.95,
+        "justification": "Consistent behavioral pattern across all trips",
+        "embedding": [],
+        "createdAt": "2025-03-08T14:00:00Z",
+        "ttl": null
+    },
+    {
+        "id": "mem_steve_003",
+        "memoryId": "mem_steve_003",
+        "userId": "steve",
+        "tenantId": "default",
+        "memory_type": "episodic",
+        "text": "Steve is planning a trip to Washington DC to visit the Smithsonian museums in December 2025",
+        "facets": {
+            "category": "trip",
+            "destination": "washington_dc",
+            "purpose": "museums",
+            "timeframe": "december_2025"
+        },
+        "salience": 0.9,
+        "justification": "User mentioned upcoming DC trip for museum visits",
+        "embedding": [],
+        "createdAt": "2025-10-05T09:30:00Z",
+        "ttl": 7776000
+    },
+    {
+        "id": "mem_steve_004",
+        "memoryId": "mem_steve_004",
+        "userId": "steve",
+        "tenantId": "default",
+        "memory_type": "declarative",
+        "text": "Steve prefers American diners and traditional local cuisine over trendy fusion restaurants",
+        "facets": {
+            "category": "dining",
+            "preference": "traditional,local",
+            "style": "diner,comfort_food",
+            "avoids": "fusion,trendy"
+        },
+        "salience": 0.85,
+        "justification": "User stated preference for authentic local food experiences",
+        "embedding": [],
+        "createdAt": "2025-02-20T12:15:00Z",
+        "ttl": null
+    },
+    {
+        "id": "mem_steve_005",
+        "memoryId": "mem_steve_005",
+        "userId": "steve",
+        "tenantId": "default",
+        "memory_type": "procedural",
+        "text": "Steve prefers walking tours and outdoor activities to indoor entertainment",
+        "facets": {
+            "category": "activity",
+            "preference": "outdoor,walking",
+            "type": "tour,nature",
+            "avoids": "indoor_entertainment"
+        },
+        "salience": 0.8,
+        "justification": "Behavioral pattern showing preference for active outdoor experiences",
+        "embedding": [],
+        "createdAt": "2025-04-15T15:30:00Z",
+        "ttl": null
+    }
+]

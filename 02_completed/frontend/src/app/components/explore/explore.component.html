@@ -1,0 +1,195 @@
+<div class="relative">
+  <!-- Main Content Grid -->
+  <div class="max-w-7xl mx-auto px-4 py-8 grid grid-cols-1 md:grid-cols-[260px_1fr] gap-6">
+    
+    <!-- Sidebar: Filters -->
+    <div class="space-y-4">
+      <div class="mb-4">
+        <h2 class="text-xl font-semibold tracking-tight">Filters</h2>
+        <p class="text-sm text-gray-500">Tune the vibe</p>
+      </div>
+      
+      <div class="grid gap-3">
+        <!-- Place Type -->
+        <label class="text-sm font-medium">Place Type</label>
+        <select 
+          [(ngModel)]="filters.placeType"
+          (change)="applyFilters()"
+          class="px-3 py-2 rounded-xl border focus:ring-2 focus:ring-cosmos-primary focus:border-transparent"
+        >
+          <option value="all">All Places</option>
+          <option value="hotel">Hotels</option>
+          <option value="restaurant">Restaurants</option>
+          <option value="attraction">Attractions</option>
+        </select>
+        
+        <!-- Theme -->
+        <label class="text-sm font-medium mt-2">Theme</label>
+        <input 
+          [(ngModel)]="filters.theme"
+          (input)="applyFilters()"
+          class="px-3 py-2 rounded-xl border focus:ring-2 focus:ring-cosmos-primary focus:border-transparent" 
+          placeholder="e.g., street photography"
+        />
+        
+        <!-- Budget -->
+        <label class="text-sm font-medium mt-2">Budget</label>
+        <select 
+          [(ngModel)]="filters.budget"
+          (change)="applyFilters()"
+          class="px-3 py-2 rounded-xl border focus:ring-2 focus:ring-cosmos-primary focus:border-transparent"
+        >
+          <option value="any">Any</option>
+          <option value="budget">Budget ($)</option>
+          <option value="moderate">Moderate ($$)</option>
+          <option value="upscale">Upscale ($$$)</option>
+          <option value="luxury">Luxury ($$$$)</option>
+        </select>
+        
+        <!-- Dietary -->
+        <label class="text-sm font-medium mt-2">Dietary</label>
+        <select 
+          [(ngModel)]="filters.dietary"
+          (change)="applyFilters()"
+          class="px-3 py-2 rounded-xl border focus:ring-2 focus:ring-cosmos-primary focus:border-transparent"
+        >
+          <option value="any">Any</option>
+          <option value="vegetarian">Vegetarian</option>
+          <option value="vegan">Vegan</option>
+          <option value="gluten-free">Gluten-free</option>
+        </select>
+        
+        <!-- Accessibility -->
+        <label class="text-sm font-medium mt-2">Accessibility</label>
+        <select 
+          [(ngModel)]="filters.accessibility"
+          (change)="applyFilters()"
+          class="px-3 py-2 rounded-xl border focus:ring-2 focus:ring-cosmos-primary focus:border-transparent"
+        >
+          <option value="any">Any</option>
+          <option value="wheelchair">Wheelchair-friendly</option>
+          <option value="low-stairs">Low stairs</option>
+        </select>
+        
+        <!-- Reset Button -->
+        <button 
+          (click)="resetFilters()"
+          class="mt-3 px-3 py-2 rounded-xl border border-cosmos-primary text-cosmos-primary hover:bg-cosmos-primary hover:text-white transition"
+        >
+          Reset Filters
+        </button>
+      </div>
+    </div>
+    
+    <!-- Main Content: Places Grid -->
+    <div class="grid gap-4">
+      <div class="flex items-center justify-between">
+        <div>
+          <h2 class="text-xl font-semibold tracking-tight">Explore Barcelona</h2>
+          <p class="text-sm text-gray-500">Discover amazing places</p>
+        </div>
+        <div class="flex gap-2">
+          <button class="px-3 py-1.5 rounded-xl border border-cosmos-primary bg-cosmos-primary text-white">
+            List
+          </button>
+          <button class="px-3 py-1.5 rounded-xl border border-cosmos-primary text-cosmos-primary hover:bg-cosmos-primary hover:text-white transition">
+            Map
+          </button>
+        </div>
+      </div>
+      
+      <!-- Places Grid -->
+      <div class="grid md:grid-cols-3 gap-4">
+        <app-place-card
+          *ngFor="let place of places"
+          [place]="place"
+          (save)="onSavePlace($event)"
+          (addToDay)="onAddToDay($event)"
+          (swap)="onSwapPlace($event)"
+        ></app-place-card>
+      </div>
+    </div>
+  </div>
+
+  <!-- Floating Action Button (Chat) -->
+  <button 
+    (click)="openChat()"
+    class="fixed right-4 bottom-24 md:right-8 md:bottom-8 h-12 px-4 rounded-full shadow-lg bg-cosmos-primary text-white flex items-center gap-2 hover:bg-blue-600 transition z-40"
+  >
+    <span>Chat with Concierge</span>
+    <span class="inline-block">💬</span>
+  </button>
+
+  <!-- Chat Drawer -->
+  <div [class.pointer-events-auto]="chatOpen" [class.pointer-events-none]="!chatOpen" class="fixed inset-0 z-50">
+    <!-- Scrim/Backdrop -->
+    <div 
+      (click)="closeChat()" 
+      [class.bg-black/30]="chatOpen"
+      [class.bg-transparent]="!chatOpen"
+      class="absolute inset-0 transition-colors duration-300"
+    ></div>
+    
+    <!-- Chat Panel -->
+    <div 
+      [class.translate-x-0]="chatOpen"
+      [class.translate-x-full]="!chatOpen"
+      class="absolute right-0 top-0 h-full w-full max-w-md bg-white border-l shadow-xl transform transition-transform duration-300"
+    >
+      <!-- Header -->
+      <div class="h-16 border-b flex items-center justify-between px-4 bg-gradient-to-r from-cosmos-primary to-cosmos-accent text-white">
+        <div class="font-semibold">Plan with Concierge 🤖</div>
+        <button 
+          (click)="closeChat()"
+          class="px-3 py-1.5 rounded-xl border border-white text-white hover:bg-white hover:text-cosmos-primary transition"
+        >
+          Close
+        </button>
+      </div>
+      
+      <!-- Messages -->
+      <div class="h-[calc(100%-8rem)] overflow-y-auto p-4 space-y-3 bg-gray-50">
+        <div *ngIf="messages.length === 0" class="text-center text-gray-500 mt-8">
+          <div class="text-4xl mb-4">👋</div>
+          <p>Start a conversation with your travel concierge!</p>
+          <p class="text-sm mt-2">Ask about hotels, restaurants, or activities.</p>
+        </div>
+        
+        <app-message 
+          *ngFor="let message of messages" 
+          [message]="message"
+        ></app-message>
+        
+        <div *ngIf="isLoading" class="flex justify-start gap-3">
+          <div class="h-8 w-8 rounded-full bg-gray-200 grid place-items-center">🤖</div>
+          <div class="bg-white rounded-2xl px-4 py-3 border">
+            <div class="flex gap-1">
+              <span class="animate-bounce">●</span>
+              <span class="animate-bounce" style="animation-delay: 0.1s">●</span>
+              <span class="animate-bounce" style="animation-delay: 0.2s">●</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Input -->
+      <div class="h-16 border-t grid grid-cols-[1fr_auto] gap-2 p-3 bg-white">
+        <input 
+          [(ngModel)]="newMessage"
+          (keyup.enter)="sendMessage()"
+          [disabled]="isLoading"
+          class="px-3 py-2 rounded-xl border focus:ring-2 focus:ring-cosmos-primary focus:border-transparent" 
+          placeholder="Ask for recommendations..."
+        />
+        <button 
+          (click)="sendMessage()"
+          [disabled]="!newMessage.trim() || isLoading"
+          [class.opacity-50]="!newMessage.trim() || isLoading"
+          class="px-4 rounded-xl bg-cosmos-primary text-white hover:bg-blue-600 transition disabled:cursor-not-allowed"
+        >
+          Send
+        </button>
+      </div>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Cosmos Voyager — Preview (Fixed)</title>
+    <!-- Tailwind CSS (Play CDN) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              cosmos: { primary: '#0078D4', accent: '#00BCF2' }
+            }
+          }
+        }
+      };
+    </script>
+    <!-- React + ReactDOM (UMD) and Babel for JSX -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+      /* Error overlay */
+      #errbox {
+        display:none; position:fixed; z-index:99999; inset:0; background:rgba(0,0,0,.7);
+        color:#fff; padding:24px; font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        overflow:auto;
+      }
+      #errbox pre { white-space:pre-wrap; }
+    </style>
+  </head>
+  <body class="min-h-screen bg-gradient-to-b from-white to-slate-50 text-slate-900">
+    <div id="root"></div>
+    <div id="errbox"><h2 class="text-lg font-semibold mb-2">Runtime error</h2><pre id="errmsg"></pre></div>
+
+    <script>
+      // Basic error surface to avoid white screen
+      window.addEventListener('error', function (e) {
+        const box = document.getElementById('errbox'); const msg = document.getElementById('errmsg');
+        if (box && msg) { box.style.display = 'block'; msg.textContent = (e.error && e.error.stack) ? e.error.stack : (e.message || String(e)); }
+      });
+      window.addEventListener('unhandledrejection', function (e) {
+        const box = document.getElementById('errbox'); const msg = document.getElementById('errmsg');
+        if (box && msg) { box.style.display = 'block'; msg.textContent = (e.reason && e.reason.stack) ? e.reason.stack : (e.reason && e.reason.message) || String(e.reason); }
+      });
+    </script>
+
+    <!-- App code (JSX) -->
+    <script type="text/babel" data-presets="env,react">
+      const { useState } = React;
+
+      const screens = [
+        { key: "home", label: "Home" },
+        { key: "explore", label: "Explore" },
+        { key: "profile", label: "Profile & Memories" }
+      ];
+
+      const Chip = ({ txt }) => (
+        <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-xs mr-2 mb-2">
+          {txt}
+        </span>
+      );
+
+      const SectionTitle = ({ title, subtitle }) => (
+        <div className="mb-4">
+          <h2 className="text-xl font-semibold tracking-tight">{title}</h2>
+          {subtitle ? <p className="text-sm text-gray-500">{subtitle}</p> : null}
+        </div>
+      );
+
+      const TopBar = () => (
+        <div className="w-full h-16 border-b bg-white/80 backdrop-blur sticky top-0 z-40">
+          <div className="max-w-7xl mx-auto h-full flex items-center justify-between px-4">
+            <div className="flex items-center gap-3">
+              <div className="font-semibold text-cosmos-primary">Cosmos Voyager</div>
+              <div className="hidden md:flex items-center gap-2 ml-6">
+                <button className="px-3 py-1.5 rounded-xl border border-cosmos-primary text-cosmos-primary hover:bg-cosmos-primary hover:text-white">City/Region ▾</button>
+                <button className="px-3 py-1.5 rounded-xl border border-cosmos-primary text-cosmos-primary hover:bg-cosmos-primary hover:text-white">Dates ▾</button>
+                <button className="px-3 py-1.5 rounded-xl border border-cosmos-primary text-cosmos-primary hover:bg-cosmos-primary hover:text-white">Travelers ▾</button>
+                <button className="px-3 py-1.5 rounded-xl border border-cosmos-primary text-cosmos-primary hover:bg-cosmos-primary hover:text-white">Budget ▾</button>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button className="px-3 py-1.5 rounded-xl border border-cosmos-primary text-cosmos-primary hover:bg-cosmos-primary hover:text-white">Sign in</button>
+            </div>
+          </div>
+        </div>
+      );
+
+      const Hero = () => (
+        <div className="max-w-7xl mx-auto grid md:grid-cols-2 gap-8 items-center px-4 pt-10 pb-16">
+          <div>
+            <h1 className="text-4xl md:text-5xl font-bold tracking-tight leading-tight">
+              Plan like a local. <span className="text-cosmos-accent">Remembered</span> like a friend.
+            </h1>
+            <p className="mt-4 text-gray-600 max-w-prose">
+              A memory-first travel OS that learns your vibe and builds itineraries around what you love.
+            </p>
+            <div className="mt-6 flex gap-3">
+              <button className="px-5 py-2.5 rounded-2xl bg-cosmos-primary text-white">Start a trip</button>
+              <button className="px-5 py-2.5 rounded-2xl border border-cosmos-primary text-cosmos-primary hover:bg-cosmos-primary hover:text-white">Explore cities</button>
+            </div>
+            <div className="mt-6 text-sm text-gray-500">Trending themes:</div>
+            <div className="mt-2 flex flex-wrap">
+              {["Street Photography","Coffee Culture","Family-Friendly","Night Markets"].map(t => <Chip key={t} txt={t} />)}
+            </div>
+          </div>
+          <div className="aspect-video rounded-3xl overflow-hidden border">
+            <img src="https://images.unsplash.com/photo-1468436139062-f60a71c5c892?q=80&w=1600&auto=format&fit=crop" alt="NYC skyline at dusk" className="h-full w-full object-cover" />
+          </div>
+        </div>
+      );
+
+      const PlaceCard = ({ i }) => (
+        <div className="rounded-2xl border overflow-hidden bg-white hover:shadow-sm transition">
+          <div className="h-32 bg-gray-100 grid place-items-center text-gray-400">photo</div>
+          <div className="p-3">
+            <div className="font-semibold">Cozy Café #{i}</div>
+            <div className="text-xs text-gray-500 mt-1">Gothic Quarter · $$ · Open late</div>
+            <div className="mt-2 flex flex-wrap gap-2 text-xs">
+              <Chip txt="cozy" /><Chip txt="late-night" /><Chip txt="vegetarian" />
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button className="px-2.5 py-1.5 rounded-lg border border-cosmos-primary text-cosmos-primary text-sm hover:bg-cosmos-primary hover:text-white">Save</button>
+              <button className="px-2.5 py-1.5 rounded-lg border border-cosmos-primary text-cosmos-primary text-sm hover:bg-cosmos-primary hover:text-white">Add to Day</button>
+              <button className="px-2.5 py-1.5 rounded-lg border border-cosmos-primary text-cosmos-primary text-sm hover:bg-cosmos-primary hover:text-white">Swap to Similar</button>
+            </div>
+          </div>
+        </div>
+      );
+
+      const ExploreGrid = ({ onOpenChat }) => (
+        <div className="relative">
+          <div className="max-w-7xl mx-auto px-4 py-8 grid grid-cols-1 md:grid-cols-[260px_1fr] gap-6">
+            <div className="space-y-4">
+              <SectionTitle title="Filters" subtitle="Tune the vibe" />
+              <div className="grid gap-2">
+                <label className="text-sm">Theme</label>
+                <input className="px-3 py-2 rounded-xl border" placeholder="e.g., street photography" />
+                <label className="text-sm mt-2">Budget</label>
+                <select className="px-3 py-2 rounded-xl border"><option>Any</option><option>Low</option><option>Mid</option><option>High</option></select>
+                <label className="text-sm mt-2">Dietary</label>
+                <select className="px-3 py-2 rounded-xl border"><option>Any</option><option>Vegetarian</option><option>Vegan</option><option>Gluten-free</option></select>
+                <label className="text-sm mt-2">Accessibility</label>
+                <select className="px-3 py-2 rounded-xl border"><option>Any</option><option>Wheelchair-friendly</option><option>Low stairs</option></select>
+                <button className="mt-3 px-3 py-2 rounded-xl border border-cosmos-primary text-cosmos-primary hover:bg-cosmos-primary hover:text-white">Reset</button>
+              </div>
+            </div>
+            <div className="grid gap-4">
+              <div className="flex items-center justify-between">
+                <SectionTitle title="Explore Barcelona" subtitle="List · Map" />
+                <div className="flex gap-2">
+                  <button className="px-3 py-1.5 rounded-xl border border-cosmos-primary text-cosmos-primary hover:bg-cosmos-primary hover:text-white">List</button>
+                  <button className="px-3 py-1.5 rounded-xl border border-cosmos-primary text-cosmos-primary hover:bg-cosmos-primary hover:text-white">Map</button>
+                </div>
+              </div>
+              <div className="grid md:grid-cols-3 gap-4">
+                {Array.from({length:9}).map((_, idx) => (<PlaceCard key={idx} i={idx+1} />))}
+              </div>
+            </div>
+          </div>
+
+          {/* FAB to open chat drawer */}
+          <button onClick={onOpenChat} className="fixed right-4 bottom-24 md:right-8 md:bottom-8 h-12 px-4 rounded-full shadow-lg bg-cosmos-primary text-white flex items-center gap-2">
+            <span>Chat</span> <span className="inline-block">💬</span>
+          </button>
+        </div>
+      );
+
+      const Message = ({ role, text, chips }) => (
+        <div className={`flex gap-3 ${role === "user" ? "justify-end" : "justify-start"}`}>
+          {role !== "user" ? <div className="h-8 w-8 rounded-full bg-gray-200 grid place-items-center">{role === "assistant" ? "🤖" : "🧭"}</div> : null}
+          <div className={`max-w-[70%] rounded-2xl px-4 py-3 border ${role === "user" ? "bg-black text-white" : "bg-white"}`}>
+            <div className="text-sm leading-relaxed">{text}</div>
+            {chips && chips.length ? (
+              <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                {chips.map((c, i) => <Chip key={i} txt={c} />)}
+              </div>
+            ) : null}
+          </div>
+          {role === "user" ? <div className="h-8 w-8 rounded-full bg-gray-900 text-white grid place-items-center">U</div> : null}
+        </div>
+      );
+
+      const ChatDrawer = ({ open, onClose }) => (
+        <div className={`fixed inset-0 z-50 ${open ? "pointer-events-auto" : "pointer-events-none"}`}>
+          {/* scrim */}
+          <div onClick={onClose} className={`absolute inset-0 transition ${open ? "bg-black/30" : "bg-transparent"}`}></div>
+          {/* panel */}
+          <div className={`absolute right-0 top-0 h-full w-full max-w-md bg-white border-l shadow-xl transform transition-transform ${open ? "translate-x-0" : "translate-x-full"}`}>
+            <div className="h-16 border-b flex items-center justify-between px-4">
+              <div className="font-semibold">Plan with Concierge</div>
+              <button onClick={onClose} className="px-3 py-1.5 rounded-xl border border-cosmos-primary text-cosmos-primary hover:bg-cosmos-primary hover:text-white">Close</button>
+            </div>
+            <div className="h-[calc(100%-8rem)] overflow-y-auto p-4 space-y-3">
+              <Message role="assistant" text="Tell me where you're headed and your vibe. I’ll craft a plan." />
+              <Message role="user" text="Barcelona, 3 nights. Late dinners, coffee, minimal hills." />
+              <Message role="assistant" text="Noted. I’ll build evenings around cozy cafés and flat walks near the Gothic Quarter. Ready for day one?" />
+            </div>
+            <div className="h-16 border-t grid grid-cols-[1fr_auto] gap-2 p-3">
+              <input className="px-3 py-2 rounded-xl border" placeholder="Ask for an itinerary…" />
+              <button className="px-4 rounded-xl bg-cosmos-primary text-white">Send</button>
+            </div>
+          </div>
+        </div>
+      );
+
+      const ResultsList = () => (
+        <div className="space-y-3">
+          {Array.from({length:4}).map((_, i) => (
+            <div key={i} className="rounded-2xl border p-3 bg-white">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="font-semibold">Nømad Coffee Lab #{i+1}</div>
+                  <div className="text-xs text-gray-500">Eixample · $$ · 0.6 km</div>
+                  <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                    <Chip txt="cozy" /><Chip txt="specialty coffee" /><Chip txt="late-night" />
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button className="px-2.5 py-1.5 rounded-lg border border-cosmos-primary text-cosmos-primary text-sm hover:bg-cosmos-primary hover:text-white">Save</button>
+                  <button className="px-2.5 py-1.5 rounded-lg border border-cosmos-primary text-cosmos-primary text-sm hover:bg-cosmos-primary hover:text-white">Add to Day</button>
+                  <button className="px-2.5 py-1.5 rounded-lg border border-cosmos-primary text-cosmos-primary text-sm hover:bg-cosmos-primary hover:text-white">Swap to Similar</button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      );
+
+      const ItineraryStrip = () => (
+        <div className="w-full border-t bg-white/70 backdrop-blur sticky bottom-0 z-30">
+          <div className="max-w-7xl mx-auto px-4 py-3">
+            <div className="text-xs text-gray-500">Itinerary</div>
+            <div className="flex gap-2 overflow-x-auto py-2">
+              <div className="min-w-[220px] rounded-xl border p-3 bg-white">
+                <div className="text-sm font-semibold">Sat, Oct 11</div>
+                <div className="mt-2 text-xs text-gray-600">10:00 Nømad Coffee → 14:00 Gothic Walk → 20:30 Dinner</div>
+              </div>
+              <div className="min-w-[220px] rounded-xl border p-3 bg-white">
+                <div className="text-sm font-semibold">Sun, Oct 12</div>
+                <div className="mt-2 text-xs text-gray-600">11:00 Brunch → 15:00 Park → 21:00 Tapas</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+
+      const ProfileScreen = () => (
+        <div className="max-w-7xl mx-auto px-4 py-6 grid gap-6">
+          <SectionTitle title="Profile & Memories" subtitle="Edit preferences; your data stays behind the scenes" />
+          <div className="grid md:grid-cols-2 gap-6">
+            <div className="rounded-2xl border p-4 bg-white">
+              <div className="text-sm font-semibold mb-2">Your facets</div>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="text-sm">Budget
+                  <select className="w-full mt-1 px-3 py-2 rounded-xl border"><option>Mid</option><option>Low</option><option>High</option></select>
+                </label>
+                <label className="text-sm">Mobility
+                  <select className="w-full mt-1 px-3 py-2 rounded-xl border"><option>Walk</option><option>Transit</option><option>Car</option></select>
+                </label>
+                <label className="text-sm">Dietary
+                  <select className="w-full mt-1 px-3 py-2 rounded-xl border"><option>Vegetarian</option><option>Vegan</option><option>GF</option></select>
+                </label>
+                <label className="text-sm">Time of day
+                  <select className="w-full mt-1 px-3 py-2 rounded-xl border"><option>Night-owl</option><option>Early-bird</option></select>
+                </label>
+              </div>
+              <button className="mt-4 px-3 py-2 rounded-xl border border-cosmos-primary text-cosmos-primary hover:bg-cosmos-primary hover:text-white">Save</button>
+            </div>
+            <div className="rounded-2xl border p-4 bg-white">
+              <div className="text-sm font-semibold mb-2">Past highlights</div>
+              <div className="space-y-3 text-sm">
+                <div className="rounded-xl border p-3">Kyoto · Morning markets · May 2024</div>
+                <div className="rounded-xl border p-3">Barcelona · Late-night cafés · Aug 2025</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+
+      function App() {
+        const [tab, setTab] = React.useState("home");
+        const [chatOpen, setChatOpen] = React.useState(false);
+        return (
+          <div>
+            <TopBar />
+
+            <div className="sticky top-16 z-30 bg-white/70 backdrop-blur border-b">
+              <div className="max-w-7xl mx-auto px-4 flex gap-2 overflow-x-auto">
+                {screens.map(s => (
+                  <button
+                    key={s.key}
+                    onClick={() => setTab(s.key)}
+                    className={`px-4 py-3 border-b-2 -mb-px ${tab === s.key ? "border-cosmos-primary font-semibold" : "border-transparent text-gray-500"}`}
+                  >
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {tab === "home" && <Hero />}
+            {tab === "explore" && <>
+              <ExploreGrid onOpenChat={() => setChatOpen(true)} />
+              <ChatDrawer open={chatOpen} onClose={() => setChatOpen(false)} />
+            </>}
+            {tab === "profile" && <ProfileScreen />}
+
+            <footer className="mt-16 py-10 text-center text-xs text-gray-500">© 2025 Cosmos Voyager · Prototype UI for workshop</footer>
+          </div>
+        );
+      }
+
+      const rootEl = document.getElementById('root');
+      if (!rootEl) {
+        throw new Error('Root element not found');
+      }
+      const root = ReactDOM.createRoot(rootEl);
+      root.render(<App />);
+    </script>
+  </body>
+</html>
