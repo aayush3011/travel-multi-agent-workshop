@@ -12,15 +12,16 @@ This script:
    - trips.json (5 sample trips)
 
 Container List:
-- threads (conversation threads)
-- messages (chat messages)
-- summaries (conversation summaries)
-- memories (user preferences - loaded from JSON)
-- places (hotels, restaurants, attractions - loaded from JSON)
-- trips (trip itineraries - loaded from JSON)
-- users (user profiles - loaded from JSON)
-- api_events (API call logs)
-- checkpoints (LangGraph state)
+- Sessions
+- Messages (chat messages)
+- Summaries (conversation summaries)
+- Memories (user preferences - loaded from JSON)
+- Places (hotels, restaurants, attractions - loaded from JSON)
+- Trips (trip itineraries - loaded from JSON)
+- Users (user profiles - loaded from JSON)
+- ApiEvents (API call logs)
+- Checkpoints (LangGraph state)
+- Debug (chat completion logs)
 
 Run: python src/seed_data_new.py
 """
@@ -47,12 +48,6 @@ COSMOS_ENDPOINT = os.getenv("COSMOSDB_ENDPOINT")
 COSMOS_KEY = os.getenv("COSMOS_KEY")
 DATABASE_NAME = os.getenv("COSMOS_DB_DATABASE_NAME", "TravelAssistant")
 
-# Azure OpenAI for embeddings
-AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
-AZURE_OPENAI_EMBEDDING_DEPLOYMENT = os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "text-embedding-3-large")
-AZURE_OPENAI_API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION", "2024-08-01-preview")
-AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
-
 # Vector search configuration
 VECTOR_DIMENSIONS = 1024
 VECTOR_INDEX_TYPE = "diskANN"
@@ -78,44 +73,6 @@ print(f"📊 Embedding model: {AZURE_OPENAI_EMBEDDING_DEPLOYMENT}")
 def get_cosmos_client() -> CosmosClient:
     """Initialize Cosmos DB client"""
     return CosmosClient(COSMOS_ENDPOINT, COSMOS_KEY)
-
-
-# ============================================================================
-# Azure OpenAI Client Initialization
-# ============================================================================
-
-_openai_client = None
-
-
-def get_openai_client() -> AzureOpenAI:
-    """Initialize Azure OpenAI client (lazy)"""
-    global _openai_client
-    if _openai_client is None:
-        _openai_client = AzureOpenAI(
-            azure_endpoint=AZURE_OPENAI_ENDPOINT,
-            api_key=AZURE_OPENAI_API_KEY,
-            api_version=AZURE_OPENAI_API_VERSION
-        )
-    return _openai_client
-
-
-def generate_embedding(text: str) -> List[float]:
-    """Generate embedding vector for text using Azure OpenAI"""
-    if not text or not AZURE_OPENAI_ENDPOINT:
-        return [0.0] * VECTOR_DIMENSIONS
-
-    try:
-        client = get_openai_client()
-        response = client.embeddings.create(
-            input=text,
-            model=AZURE_OPENAI_EMBEDDING_DEPLOYMENT,
-            dimensions=VECTOR_DIMENSIONS,
-        )
-        return response.data[0].embedding
-    except Exception as e:
-        print(f"   ⚠️  Warning: Could not generate embedding: {e}")
-        return [0.0] * VECTOR_DIMENSIONS
-
 
 # ============================================================================
 # Container Definitions with Vector + Full-Text Indexing

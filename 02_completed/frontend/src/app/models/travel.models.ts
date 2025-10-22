@@ -108,3 +108,37 @@ export interface PlaceSearchRequest {
     priceTier?: string;
   };
 }
+
+export interface User {
+  id: string;
+  userId: string;
+  tenantId: string;
+  name: string;
+  gender?: string;
+  age?: number;
+  phone?: string;
+  address?: {
+    street?: string;
+    city?: string;
+    state?: string;
+    zip?: string;
+    country?: string;
+  };
+  email?: string;
+  createdAt: string;
+}
+
+export interface City {
+  id: string;
+  name: string;
+  displayName: string;
+}
+
+export interface PlaceFilterRequest {
+  city: string;
+  types?: string[];
+  priceTiers?: string[];
+  dietary?: string[];
+  accessibility?: string[];
+}
+

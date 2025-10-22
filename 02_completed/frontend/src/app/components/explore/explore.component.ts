@@ -1,9 +1,10 @@
-import { Component, OnInit, OnDestroy } from '@angular/core';
+import { Component, OnInit, OnDestroy, HostListener } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { ActivatedRoute } from '@angular/router';
 import { Subscription } from 'rxjs';
 import { TravelApiService } from '../../services/travel-api.service';
-import { Place, Thread, Message } from '../../models/travel.models';
+import { Place, Thread, Message, City } from '../../models/travel.models';
 import { PlaceCardComponent } from '../shared/place-card/place-card.component';
 import { MessageComponent } from '../shared/message/message.component';
 
@@ -21,6 +22,26 @@ export class ExploreComponent implements OnInit, OnDestroy {
   newMessage = '';
   isLoading = false;
   
+  // Trip Planning Fields (from Home component)
+  selectedCity = '';
+  startDate = '';
+  endDate = '';
+  travelers = {
+    adults: 1,
+    children: 0,
+    pets: 0
+  };
+
+  // City Autocomplete
+  cities: City[] = [];
+  filteredCities: City[] = [];
+  showCityDropdown = false;
+  isLoadingCities = false;
+
+  // Pickers
+  showDatePicker = false;
+  showTravelersPicker = false;
+  
   // Filters
   filters = {
     theme: '',
@@ -32,9 +53,40 @@ export class ExploreComponent implements OnInit, OnDestroy {
 
   private subscriptions = new Subscription();
 
-  constructor(private travelApi: TravelApiService) {}
+  constructor(
+    private travelApi: TravelApiService,
+    private route: ActivatedRoute
+  ) {}
 
   ngOnInit(): void {
+    // Load cities for autocomplete
+    this.loadCities();
+
+    // Check for city query param
+    this.route.queryParams.subscribe(params => {
+      if (params['city']) {
+        const cityName = params['city'];
+        // Find and select the city
+        this.travelApi.getCities().subscribe(cities => {
+          const city = cities.find(c => c.name === cityName);
+          if (city) {
+            this.selectedCity = city.displayName;
+            this.loadPlacesForCity(city.name);
+          }
+        });
+      }
+    });
+
+    // Subscribe to selected city from service
+    this.subscriptions.add(
+      this.travelApi.selectedCity$.subscribe(city => {
+        if (city) {
+          this.selectedCity = city;
+          this.loadPlacesForCity(city);
+        }
+      })
+    );
+
     // Subscribe to messages
     this.subscriptions.add(
       this.travelApi.messages$.subscribe(messages => {
@@ -49,36 +101,12 @@ export class ExploreComponent implements OnInit, OnDestroy {
       })
     );
 
-    // Load some sample places
-    this.loadSamplePlaces();
+    // Don't load any places initially - wait for user to select city and click "Start a trip"
+    // this.loadSamplePlaces();
   }
 
   ngOnDestroy(): void {
     this.subscriptions.unsubscribe();
-  }
-
-  loadSamplePlaces(): void {
-    // For demo purposes, create some mock places
-    // In production, this would call the API
-    this.places = this.createMockPlaces();
-  }
-
-  createMockPlaces(): Place[] {
-    const mockPlaces: Place[] = [];
-    for (let i = 1; i <= 9; i++) {
-      mockPlaces.push({
-        id: `place-${i}`,
-        geoScopeId: 'barcelona',
-        type: i % 3 === 0 ? 'hotel' : i % 3 === 1 ? 'restaurant' : 'attraction',
-        name: `Amazing Place #${i}`,
-        description: 'A wonderful location perfect for your trip. Experience local culture and great atmosphere.',
-        neighborhood: 'Gothic Quarter',
-        rating: 4.5 + (Math.random() * 0.5),
-        priceTier: ['budget', 'moderate', 'upscale'][i % 3] as any,
-        tags: ['cozy', 'popular', 'instagram-worthy'].slice(0, 2)
-      });
-    }
-    return mockPlaces;
   }
 
   openChat(): void {
@@ -142,8 +170,34 @@ export class ExploreComponent implements OnInit, OnDestroy {
 
   applyFilters(): void {
     console.log('Applying filters:', this.filters);
-    // In production, this would call the API with filters
-    this.loadSamplePlaces();
+    
+    // Get the current selected city
+    const city = this.cities.find(c => c.displayName === this.selectedCity);
+    
+    if (!city) {
+      console.log('No city selected, cannot apply filters');
+      return;
+    }
+
+    this.isLoading = true;
+    
+    const filterRequest: any = {
+      city: city.name,
+      types: this.filters.placeType !== 'all' ? [this.filters.placeType] : undefined,
+      priceTiers: this.filters.budget !== 'any' ? [this.filters.budget] : undefined
+    };
+
+    this.travelApi.filterPlaces(filterRequest).subscribe({
+      next: (places) => {
+        this.places = places;
+        this.isLoading = false;
+        console.log(`✅ Applied filters, got ${places.length} places`);
+      },
+      error: (error) => {
+        console.error('Error applying filters:', error);
+        this.isLoading = false;
+      }
+    });
   }
 
   resetFilters(): void {
@@ -154,6 +208,212 @@ export class ExploreComponent implements OnInit, OnDestroy {
       accessibility: 'any',
       placeType: 'all'
     };
-    this.loadSamplePlaces();
+    // Re-apply filters with reset values
+    this.applyFilters();
+  }
+
+  // City/Dates/Travelers Methods (from Home component)
+  loadCities(): void {
+    this.isLoadingCities = true;
+    this.travelApi.getCities().subscribe({
+      next: (cities) => {
+        this.cities = cities;
+        this.filteredCities = cities;
+        this.isLoadingCities = false;
+      },
+      error: (error) => {
+        console.error('Error loading cities:', error);
+        this.isLoadingCities = false;
+      }
+    });
+  }
+
+  onCityInputChange(): void {
+    if (!this.selectedCity) {
+      this.filteredCities = this.cities;
+      this.showCityDropdown = true;
+      return;
+    }
+
+    const searchTerm = this.selectedCity.toLowerCase();
+    this.filteredCities = this.cities.filter(city =>
+      city.displayName.toLowerCase().includes(searchTerm) ||
+      city.name.toLowerCase().includes(searchTerm)
+    );
+    this.showCityDropdown = true;
+  }
+
+  onCityFocus(): void {
+    this.showCityDropdown = true;
+  }
+
+  onCityBlur(): void {
+    setTimeout(() => {
+      this.showCityDropdown = false;
+    }, 200);
+  }
+
+  selectCity(city: City): void {
+    this.selectedCity = city.displayName; // Keep the display name for UI
+    this.showCityDropdown = false;
+    // Don't update service yet - wait for "Start a trip" button
+  }
+
+  // Date Picker Methods
+  toggleDatePicker(): void {
+    this.showDatePicker = !this.showDatePicker;
+    this.showTravelersPicker = false;
+    this.showCityDropdown = false;
+  }
+
+  closeDatePicker(): void {
+    this.showDatePicker = false;
+  }
+
+  getDateRangeDisplay(): string {
+    if (!this.startDate && !this.endDate) {
+      return 'Add dates';
+    }
+    if (this.startDate && !this.endDate) {
+      return this.formatDate(this.startDate);
+    }
+    if (this.startDate && this.endDate) {
+      return `${this.formatDate(this.startDate)} - ${this.formatDate(this.endDate)}`;
+    }
+    return 'Add dates';
+  }
+
+  private formatDate(dateString: string): string {
+    if (!dateString) return '';
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  }
+
+  // Travelers Picker Methods
+  toggleTravelersPicker(): void {
+    this.showTravelersPicker = !this.showTravelersPicker;
+    this.showDatePicker = false;
+    this.showCityDropdown = false;
+  }
+
+  closeTravelersPicker(): void {
+    this.showTravelersPicker = false;
+  }
+
+  getTravelersDisplay(): string {
+    const parts: string[] = [];
+    
+    if (this.travelers.adults > 0) {
+      parts.push(`${this.travelers.adults} adult${this.travelers.adults !== 1 ? 's' : ''}`);
+    }
+    if (this.travelers.children > 0) {
+      parts.push(`${this.travelers.children} child${this.travelers.children !== 1 ? 'ren' : ''}`);
+    }
+    if (this.travelers.pets > 0) {
+      parts.push(`${this.travelers.pets} pet${this.travelers.pets !== 1 ? 's' : ''}`);
+    }
+    
+    return parts.length > 0 ? parts.join(', ') : '1 adult';
+  }
+
+  incrementAdults(): void {
+    if (this.travelers.adults < 10) {
+      this.travelers.adults++;
+    }
+  }
+
+  decrementAdults(): void {
+    if (this.travelers.adults > 1) {
+      this.travelers.adults--;
+    }
+  }
+
+  incrementChildren(): void {
+    if (this.travelers.children < 10) {
+      this.travelers.children++;
+    }
+  }
+
+  decrementChildren(): void {
+    if (this.travelers.children > 0) {
+      this.travelers.children--;
+    }
+  }
+
+  incrementPets(): void {
+    if (this.travelers.pets < 5) {
+      this.travelers.pets++;
+    }
+  }
+
+  decrementPets(): void {
+    if (this.travelers.pets > 0) {
+      this.travelers.pets--;
+    }
+  }
+
+  // Start Trip - Filter places by selected city
+  startTrip(): void {
+    console.log('🚀 startTrip() called');
+    console.log('Selected city:', this.selectedCity);
+    console.log('Available cities:', this.cities);
+    
+    if (!this.selectedCity) {
+      alert('Please select a city first');
+      return;
+    }
+
+    const city = this.cities.find(c => 
+      c.displayName === this.selectedCity
+    );
+
+    console.log('Found city object:', city);
+
+    if (city) {
+      console.log('Loading places for city:', city.name);
+      this.loadPlacesForCity(city.name);
+      this.travelApi.setSelectedCity(city.name);
+    } else {
+      console.error('❌ City not found in cities array!');
+      alert('City not found. Please select from the dropdown.');
+    }
+  }
+
+  loadPlacesForCity(cityName: string): void {
+    console.log('Loading places for city:', cityName);
+    this.isLoading = true;
+    
+    // Call API to fetch real places
+    const filterRequest: any = {
+      city: cityName,
+      types: this.filters.placeType !== 'all' ? [this.filters.placeType] : undefined,
+      priceTiers: this.filters.budget !== 'any' ? [this.filters.budget] : undefined
+    };
+
+    this.travelApi.filterPlaces(filterRequest).subscribe({
+      next: (places) => {
+        this.places = places;
+        this.isLoading = false;
+        console.log(`✅ Loaded ${places.length} places for ${cityName}`);
+      },
+      error: (error) => {
+        console.error('Error loading places:', error);
+        this.isLoading = false;
+        this.places = []; // Clear places on error
+        alert('Failed to load places. Please check your backend connection.');
+      }
+    });
+  }
+
+  @HostListener('document:click', ['$event'])
+  onDocumentClick(event: MouseEvent): void {
+    const target = event.target as HTMLElement;
+    
+    // Close dropdowns if clicking outside
+    if (!target.closest('.trip-planning-bar')) {
+      this.showCityDropdown = false;
+      this.showDatePicker = false;
+      this.showTravelersPicker = false;
+    }
   }
 }

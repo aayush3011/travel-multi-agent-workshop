@@ -160,8 +160,8 @@ class Place(BaseModel):
     name: str
     type: str  # "hotel" | "restaurant" | "attraction"
     description: str
-    neighborhood: str
-    priceTier: int
+    neighborhood: str = None
+    priceTier: str
     rating: float
     tags: List[str]
     accessibility: List[str]
@@ -189,6 +189,14 @@ class PlaceSearchRequest(BaseModel):
     userId: str
     tenantId: str = ""
     filters: Optional[Dict[str, Any]] = None
+
+
+class PlaceFilterRequest(BaseModel):
+    city: str
+    types: Optional[List[str]] = None
+    priceTiers: Optional[List[str]] = None
+    dietary: Optional[List[str]] = None
+    accessibility: Optional[List[str]] = None
 
 
 class User(BaseModel):
@@ -1262,6 +1270,67 @@ def search_places(search_request: PlaceSearchRequest):
         raise HTTPException(status_code=500, detail=f"Place search failed: {str(e)}")
 
 
+@app.post(
+    "/tenant/{tenantId}/places/filter",
+    tags=[PLACES_TAG],
+    summary="Filter Places by City and Criteria",
+    description="Filter places by city, type, price tier, etc. Returns places without requiring embeddings.",
+    response_model=List[Place]
+)
+def filter_places(tenantId: str, filter_request: PlaceFilterRequest):
+    """
+    Filter places by various criteria.
+    
+    This endpoint returns places from a specific city filtered by type, price tier, 
+    dietary options, and accessibility features.
+    
+    Args:
+        tenantId: Tenant identifier
+        filter_request: PlaceFilterRequest with filter parameters
+    
+    Returns:
+        List of Place objects matching the filter criteria
+    """
+    try:
+        logger.info(f"Filtering places for city: {filter_request.city}")
+        logger.info(f"Filter criteria: types={filter_request.types}, priceTiers={filter_request.priceTiers}")
+
+        # Build query
+        query = "SELECT * FROM c WHERE c.geoScopeId = @city"
+        parameters = [{"name": "@city", "value": filter_request.city.lower()}]
+        
+        # Add type filter
+        if filter_request.types and len(filter_request.types) > 0:
+            placeholders = ", ".join([f"@type{i}" for i in range(len(filter_request.types))])
+            query += f" AND c.type IN ({placeholders})"
+            for i, place_type in enumerate(filter_request.types):
+                parameters.append({"name": f"@type{i}", "value": place_type})
+        
+        # Add price tier filter
+        if filter_request.priceTiers and len(filter_request.priceTiers) > 0:
+            placeholders = ", ".join([f"@tier{i}" for i in range(len(filter_request.priceTiers))])
+            query += f" AND c.priceTier IN ({placeholders})"
+            for i, tier in enumerate(filter_request.priceTiers):
+                parameters.append({"name": f"@tier{i}", "value": tier})
+        
+        logger.info(f"Executing query: {query}")
+        logger.info(f"Parameters: {parameters}")
+        
+        # Execute query
+        places = list(places_container.query_items(
+            query=query,
+            parameters=parameters,
+            enable_cross_partition_query=True
+        ))
+        
+        logger.info(f"✅ Found {len(places)} places matching filters")
+        
+        return [Place(**place) for place in places]
+    except Exception as e:
+        logger.error(f"Error filtering places: {e}")
+        raise HTTPException(status_code=500, detail=f"Place filter failed: {str(e)}")
+
+
 @app.get(
     "/places/{placeId}",
     tags=[PLACES_TAG],
@@ -1559,6 +1628,35 @@ def get_user(tenantId: str, userId: str):
         raise
     except Exception as e:
         logger.error(f"Error retrieving user: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# Cities - Get Distinct Cities
+# ============================================================================
+
+@app.get(
+    "/cities",
+    tags=["Cities"],
+    summary="Get All Cities",
+    description="Get all distinct cities available in the system"
+)
+def get_cities_endpoint():
+    """
+    Get all distinct cities (geoScopeIds) from the places container.
+    
+    Returns:
+        List of city objects with id, name, and displayName
+    """
+    try:
+        from src.app.services.azure_cosmos_db import get_distinct_cities
+        
+        # Pass empty tenant since it's not needed for cities query
+        cities = get_distinct_cities("")
+        return cities
+    
+    except Exception as e:
+        logger.error(f"Error retrieving cities: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

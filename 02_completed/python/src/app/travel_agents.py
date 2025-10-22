@@ -307,28 +307,29 @@ async def call_orchestrator_agent(state: MessagesState, config) -> Command[Liter
     Checks for active agent and routes directly if found.
     Stores every message in database.
     """
-    session_id = config["configurable"].get("session_id", "UNKNOWN_SESSION_ID")
+    thread_id = config["configurable"].get("thread_id", "UNKNOWN_THREAD_ID")
     user_id = config["configurable"].get("userId", "UNKNOWN_USER_ID")
     tenant_id = config["configurable"].get("tenantId", "UNKNOWN_TENANT_ID")
     
-    logger.info(f"🎯 Calling orchestrator agent with Session ID: {session_id}")
+    logger.info(f"🎯 Calling orchestrator agent with Thread: {thread_id}, User: {user_id}, Tenant: {tenant_id}")
     
     # Store user message in database
     if state["messages"]:
         last_message = state["messages"][-1]
         if hasattr(last_message, 'content'):
-            store_message_in_db(session_id, tenant_id, user_id, "user", last_message.content)
+            store_message_in_db(thread_id, tenant_id, user_id, "user", last_message.content)
     
     # Add context about available parameters
     state["messages"].append(SystemMessage(
-        content=f"If tool to be called requires tenantId='{tenant_id}', userId='{user_id}', session_id='{session_id}', include these in the JSON parameters when invoking the tool. Do not ask the user for them."
+        content=f"If tool to be called requires tenantId='{tenant_id}', userId='{user_id}', session_id='{thread_id}', include these in the JSON parameters when invoking the tool. Do not ask the user for them."
     ))
     
     # Check for active agent in database
     try:
+        logging.info(f"Looking up active agent for thread {thread_id}")
         session_doc = sessions_container.read_item(
-            item=session_id, 
-            partition_key=[tenant_id, user_id, session_id]
+            item=threadId,
+            partition_key=[tenant_id, user_id, threadId]
         )
         activeAgent = session_doc.get('activeAgent', 'unknown')
     except Exception as e:
@@ -338,8 +339,8 @@ async def call_orchestrator_agent(state: MessagesState, config) -> Command[Liter
     # Initialize session if needed (for local testing)
     if activeAgent is None:
         update_session_container({
-            "id": session_id,
-            "sessionId": session_id,
+            "id": thread_id,
+            "sessionId": thread_id,
             "tenantId": tenant_id,
             "userId": user_id,
             "title": "New Conversation",
@@ -360,7 +361,7 @@ async def call_orchestrator_agent(state: MessagesState, config) -> Command[Liter
         ai_messages = [msg for msg in response["messages"] if isinstance(msg, AIMessage) and msg.content]
         if ai_messages:
             # Store only the last AI message (the final user-facing response)
-            store_message_in_db(session_id, tenant_id, user_id, "assistant", ai_messages[-1].content)
+            store_message_in_db(thread_id, tenant_id, user_id, "assistant", ai_messages[-1].content)
     
     return Command(update=response, goto="human")
 
@@ -370,23 +371,19 @@ async def call_hotel_agent(state: MessagesState, config) -> Command[Literal["hot
     """
     Hotel Agent: Searches accommodations and stores hotel preferences.
     """
-    session_id = config["configurable"].get("session_id", "UNKNOWN_SESSION_ID")
+    thread_id = config["configurable"].get("thread_id", "UNKNOWN_THREAD_ID")
     user_id = config["configurable"].get("userId", "UNKNOWN_USER_ID")
     tenant_id = config["configurable"].get("tenantId", "UNKNOWN_TENANT_ID")
     
     logger.info("🏨 ========== HOTEL AGENT CALLED ==========")
-    logger.info(f"🏨 Session ID: {session_id}")
-    logger.info(f"🏨 User ID: {user_id}")
-    logger.info(f"🏨 Tenant ID: {tenant_id}")
-    logger.info(f"🏨 Number of messages in state: {len(state['messages'])}")
     
     # Patch active agent in database
     if local_interactive_mode:
-        patch_active_agent(tenant_id or "cli-test", user_id or "cli-test", session_id, "hotel")
+        patch_active_agent(tenant_id or "cli-test", user_id or "cli-test", thread_id, "hotel_agent")
 
     # Add context about available parameters
     state["messages"].append(SystemMessage(
-        content=f"If tool to be called requires tenantId='{tenant_id}', userId='{user_id}', session_id='{session_id}', include these in the JSON parameters when invoking the tool. Do not ask the user for them."
+        content=f"If tool to be called requires tenantId='{tenant_id}', userId='{user_id}', session_id='{thread_id}', include these in the JSON parameters when invoking the tool. Do not ask the user for them."
     ))
     
     logger.info(f"🏨 Invoking hotel_agent...")
@@ -407,7 +404,7 @@ async def call_hotel_agent(state: MessagesState, config) -> Command[Literal["hot
         if ai_messages:
             logger.info(f"💬 Hotel Agent response: {ai_messages[-1].content[:200]}...")
             # Store only the last AI message (the final user-facing response)
-            store_message_in_db(session_id, tenant_id, user_id, "assistant", ai_messages[-1].content)
+            store_message_in_db(thread_id, tenant_id, user_id, "assistant", ai_messages[-1].content)
         
         # Remove system message
         response["messages"] = [
@@ -424,7 +421,7 @@ async def call_activity_agent(state: MessagesState, config) -> Command[Literal["
     """
     Activity Agent: Searches attractions and stores activity preferences.
     """
-    session_id = config["configurable"].get("session_id", "UNKNOWN_SESSION_ID")
+    thread_id = config["configurable"].get("thread_id", "UNKNOWN_THREAD_ID")
     user_id = config["configurable"].get("userId", "UNKNOWN_USER_ID")
     tenant_id = config["configurable"].get("tenantId", "UNKNOWN_TENANT_ID")
     
@@ -432,11 +429,11 @@ async def call_activity_agent(state: MessagesState, config) -> Command[Literal["
     
     # Patch active agent in database
     if local_interactive_mode:
-        patch_active_agent(tenant_id or "cli-test", user_id or "cli-test", session_id, "activity")
+        patch_active_agent(tenant_id or "cli-test", user_id or "cli-test", thread_id, "activity_agent")
     
     # Add context about available parameters
     state["messages"].append(SystemMessage(
-        content=f"If tool to be called requires tenantId='{tenant_id}', userId='{user_id}', session_id='{session_id}', include these in the JSON parameters when invoking the tool. Do not ask the user for them."
+        content=f"If tool to be called requires tenantId='{tenant_id}', userId='{user_id}', session_id='{thread_id}', include these in the JSON parameters when invoking the tool. Do not ask the user for them."
     ))
     
     response = await activity_agent.ainvoke(state, config)
@@ -446,7 +443,7 @@ async def call_activity_agent(state: MessagesState, config) -> Command[Literal["
         ai_messages = [msg for msg in response["messages"] if isinstance(msg, AIMessage) and msg.content]
         if ai_messages:
             # Store only the last AI message (the final user-facing response)
-            store_message_in_db(session_id, tenant_id, user_id, "assistant", ai_messages[-1].content)
+            store_message_in_db(thread_id, tenant_id, user_id, "assistant", ai_messages[-1].content)
         
         # Remove system message
         response["messages"] = [
@@ -462,7 +459,7 @@ async def call_dining_agent(state: MessagesState, config) -> Command[Literal["di
     """
     Dining Agent: Searches restaurants and stores dining preferences.
     """
-    session_id = config["configurable"].get("session_id", "UNKNOWN_SESSION_ID")
+    thread_id = config["configurable"].get("thread_id", "UNKNOWN_THREAD_ID")
     user_id = config["configurable"].get("userId", "UNKNOWN_USER_ID")
     tenant_id = config["configurable"].get("tenantId", "UNKNOWN_TENANT_ID")
     
@@ -470,11 +467,11 @@ async def call_dining_agent(state: MessagesState, config) -> Command[Literal["di
     
     # Patch active agent in database
     if local_interactive_mode:
-        patch_active_agent(tenant_id or "cli-test", user_id or "cli-test", session_id, "dining")
+        patch_active_agent(tenant_id or "cli-test", user_id or "cli-test", thread_id, "dining_agent")
     
     # Add context about available parameters
     state["messages"].append(SystemMessage(
-        content=f"If tool to be called requires tenantId='{tenant_id}', userId='{user_id}', session_id='{session_id}', include these in the JSON parameters when invoking the tool. Do not ask the user for them."
+        content=f"If tool to be called requires tenantId='{tenant_id}', userId='{user_id}', session_id='{thread_id}', include these in the JSON parameters when invoking the tool. Do not ask the user for them."
     ))
     
     response = await dining_agent.ainvoke(state, config)
@@ -484,7 +481,7 @@ async def call_dining_agent(state: MessagesState, config) -> Command[Literal["di
         ai_messages = [msg for msg in response["messages"] if isinstance(msg, AIMessage) and msg.content]
         if ai_messages:
             # Store only the last AI message (the final user-facing response)
-            store_message_in_db(session_id, tenant_id, user_id, "assistant", ai_messages[-1].content)
+            store_message_in_db(thread_id, tenant_id, user_id, "assistant", ai_messages[-1].content)
         
         # Remove system message
         response["messages"] = [
@@ -500,7 +497,7 @@ async def call_itinerary_generator_agent(state: MessagesState, config) -> Comman
     """
     Itinerary Generator: Synthesizes all gathered info into day-by-day plan.
     """
-    session_id = config["configurable"].get("session_id", "UNKNOWN_SESSION_ID")
+    thread_id = config["configurable"].get("thread_id", "UNKNOWN_THREAD_ID")
     user_id = config["configurable"].get("userId", "UNKNOWN_USER_ID")
     tenant_id = config["configurable"].get("tenantId", "UNKNOWN_TENANT_ID")
     
@@ -508,11 +505,11 @@ async def call_itinerary_generator_agent(state: MessagesState, config) -> Comman
     
     # Patch active agent in database
     if local_interactive_mode:
-        patch_active_agent(tenant_id or "cli-test", user_id or "cli-test", session_id, "itinerary_generator")
+        patch_active_agent(tenant_id or "cli-test", user_id or "cli-test", thread_id, "itinerary_generator_agent")
     
     # Add context about available parameters
     state["messages"].append(SystemMessage(
-        content=f"If tool to be called requires tenantId='{tenant_id}', userId='{user_id}', session_id='{session_id}', include these in the JSON parameters when invoking the tool. Do not ask the user for them."
+        content=f"If tool to be called requires tenantId='{tenant_id}', userId='{user_id}', session_id='{thread_id}', include these in the JSON parameters when invoking the tool. Do not ask the user for them."
     ))
     
     response = await itinerary_generator_agent.ainvoke(state, config)
@@ -522,7 +519,7 @@ async def call_itinerary_generator_agent(state: MessagesState, config) -> Comman
         ai_messages = [msg for msg in response["messages"] if isinstance(msg, AIMessage) and msg.content]
         if ai_messages:
             # Store only the last AI message (the final user-facing response)
-            store_message_in_db(session_id, tenant_id, user_id, "assistant", ai_messages[-1].content)
+            store_message_in_db(thread_id, tenant_id, user_id, "assistant", ai_messages[-1].content)
         
         # Remove system message
         response["messages"] = [
@@ -539,7 +536,7 @@ async def call_summarizer_agent(state: MessagesState, config) -> Command[Literal
     Summarizer agent: Compresses conversation history.
     Auto-triggered every 10 turns.
     """
-    session_id = config["configurable"].get("session_id", "UNKNOWN_SESSION_ID")
+    thread_id = config["configurable"].get("thread_id", "UNKNOWN_THREAD_ID")
     user_id = config["configurable"].get("userId", "UNKNOWN_USER_ID")
     tenant_id = config["configurable"].get("tenantId", "UNKNOWN_TENANT_ID")
     
@@ -547,11 +544,11 @@ async def call_summarizer_agent(state: MessagesState, config) -> Command[Literal
     
     # Patch active agent in database
     if local_interactive_mode:
-        patch_active_agent(tenant_id or "cli-test", user_id or "cli-test", session_id, "summarizer")
+        patch_active_agent(tenant_id or "cli-test", user_id or "cli-test", thread_id, "summarizer_agent")
     
     # Add context about available parameters
     state["messages"].append(SystemMessage(
-        content=f"If tool to be called requires tenantId='{tenant_id}', userId='{user_id}', session_id='{session_id}', include these in the JSON parameters when invoking the tool. Do not ask the user for them."
+        content=f"If tool to be called requires tenantId='{tenant_id}', userId='{user_id}', thread_id='{thread_id}', include these in the JSON parameters when invoking the tool. Do not ask the user for them."
     ))
     
     response = await summarizer_agent.ainvoke(state, config)
@@ -561,7 +558,7 @@ async def call_summarizer_agent(state: MessagesState, config) -> Command[Literal
         ai_messages = [msg for msg in response["messages"] if isinstance(msg, AIMessage) and msg.content]
         if ai_messages:
             # Store only the last AI message (the final user-facing response)
-            store_message_in_db(session_id, tenant_id, user_id, "assistant", ai_messages[-1].content)
+            store_message_in_db(thread_id, tenant_id, user_id, "assistant", ai_messages[-1].content)
         
         # Remove system message
         response["messages"] = [
@@ -587,7 +584,7 @@ def should_summarize(state: MessagesState, config) -> bool:
     Check if conversation should be summarized based on message count.
     Returns True if there are 10+ messages and no recent summarization.
     """
-    session_id = config["configurable"].get("session_id", "UNKNOWN_SESSION_ID")
+    thread_id = config["configurable"].get("thread_id", "UNKNOWN_THREAD_ID")
     user_id = config["configurable"].get("userId", "UNKNOWN_USER_ID") 
     tenant_id = config["configurable"].get("tenantId", "UNKNOWN_TENANT_ID")
     
@@ -611,7 +608,7 @@ def should_summarize(state: MessagesState, config) -> bool:
                 """
                 
                 params = [
-                    {"name": "@sessionId", "value": session_id},
+                    {"name": "@sessionId", "value": thread_id},
                     {"name": "@tenantId", "value": tenant_id}, 
                     {"name": "@userId", "value": user_id}
                 ]
@@ -643,7 +640,7 @@ def get_active_agent(state: MessagesState, config) -> str:
     This is used by the router to determine which specialized agent to call.
     Also checks if auto-summarization should be triggered.
     """
-    session_id = config["configurable"].get("session_id", "UNKNOWN_SESSION_ID")
+    thread_id = config["configurable"].get("thread_id", "UNKNOWN_THREAD_ID")
     user_id = config["configurable"].get("userId", "UNKNOWN_USER_ID")
     tenant_id = config["configurable"].get("tenantId", "UNKNOWN_TENANT_ID")
     
@@ -670,8 +667,8 @@ def get_active_agent(state: MessagesState, config) -> str:
     if not activeAgent:
         try:
             session_doc = sessions_container.read_item(
-                item=session_id,
-                partition_key=[tenant_id, user_id, session_id]
+                item=thread_id,
+                partition_key=[tenant_id, user_id, thread_id]
             )
             activeAgent = session_doc.get('activeAgent', 'unknown')
             logger.info(f"Active agent from DB: {activeAgent}")
@@ -821,13 +818,13 @@ async def interactive_chat():
     global local_interactive_mode
     local_interactive_mode = True
     
-    session_id = str(uuid.uuid4())
+    thread_id = str(uuid.uuid4())
     # thread_id = "thread-7ab201e9-2bbc-41cc-a220-995558523a4f"
     thread_config = {
         "configurable": {
-            "session_id": session_id,
-            "userId": session_id,
-            "tenantId": "cli-test"
+            "thread_id": thread_id,
+            "userId": "Tony",
+            "tenantId": "Marvel"
         }
     }
     
@@ -835,7 +832,6 @@ async def interactive_chat():
     print("🌍 Travel Assistant - Interactive Test Mode")
     print("="*70)
     print("Type 'exit' to end the conversation")
-    print(f"Session ID: {session_id}")
     print("="*70 + "\n")
     
     # Build graph
@@ -868,10 +864,6 @@ async def interactive_chat():
 # ============================================================================
 
 if __name__ == "__main__":
-    # if sys.platform == "win32":
-    #     print("Setting up Windows-specific event loop policy...")
-    #     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-    
     # Setup agents and run interactive chat
     async def main():
         await setup_agents()

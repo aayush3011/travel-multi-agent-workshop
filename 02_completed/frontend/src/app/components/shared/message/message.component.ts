@@ -20,7 +20,7 @@ import { Message } from '../../../models/travel.models';
         <div class="text-sm leading-relaxed whitespace-pre-wrap">{{ message.content }}</div>
         
         <!-- Agent metadata -->
-        <div *ngIf="message.metadata?.agent" class="mt-2 text-xs opacity-70">
+        <div *ngIf="message.metadata && message.metadata.agent" class="mt-2 text-xs opacity-70">
           Agent: {{ message.metadata.agent }}
         </div>
       </div>

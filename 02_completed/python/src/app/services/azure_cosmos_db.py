@@ -950,3 +950,91 @@ def query_debug_logs(
     logger.info(f"✅ Retrieved {len(items)} debug logs for session {session_id}")
     return items
 
+
+def get_distinct_cities(tenant_id: str) -> List[Dict[str, str]]:
+    """Get distinct cities from places container"""
+    if not places_container:
+        return []
+    
+    try:
+        # Query to get distinct geoScopeIds
+        query = """
+        SELECT DISTINCT VALUE c.geoScopeId
+        FROM c
+        """
+        
+        geo_scope_ids = list(places_container.query_items(
+            query=query,
+            enable_cross_partition_query=True
+        ))
+        
+        # Create city objects with display names
+        cities = []
+        city_name_map = {
+            "abu_dhabi": "Abu Dhabi, UAE",
+            "amsterdam": "Amsterdam, Netherlands",
+            "athens": "Athens, Greece",
+            "auckland": "Auckland, New Zealand",
+            "bangkok": "Bangkok, Thailand",
+            "barcelona": "Barcelona, Spain",
+            "beijing": "Beijing, China",
+            "berlin": "Berlin, Germany",
+            "brussels": "Brussels, Belgium",
+            "budapest": "Budapest, Hungary",
+            "chicago": "Chicago, USA",
+            "christchurch": "Christchurch, New Zealand",
+            "copenhagen": "Copenhagen, Denmark",
+            "delhi": "Delhi, India",
+            "dubai": "Dubai, UAE",
+            "dublin": "Dublin, Ireland",
+            "edinburgh": "Edinburgh, Scotland",
+            "frankfurt": "Frankfurt, Germany",
+            "glasgow": "Glasgow, Scotland",
+            "hong_kong": "Hong Kong",
+            "istanbul": "Istanbul, Turkey",
+            "kuala_lumpur": "Kuala Lumpur, Malaysia",
+            "lisbon": "Lisbon, Portugal",
+            "london": "London, UK",
+            "los_angeles": "Los Angeles, USA",
+            "madrid": "Madrid, Spain",
+            "manchester": "Manchester, UK",
+            "melbourne": "Melbourne, Australia",
+            "miami": "Miami, USA",
+            "milan": "Milan, Italy",
+            "mumbai": "Mumbai, India",
+            "new_york": "New York, USA",
+            "osaka": "Osaka, Japan",
+            "oslo": "Oslo, Norway",
+            "paris": "Paris, France",
+            "prague": "Prague, Czech Republic",
+            "reykjavik": "Reykjavik, Iceland",
+            "rome": "Rome, Italy",
+            "san_francisco": "San Francisco, USA",
+            "seattle": "Seattle, USA",
+            "seoul": "Seoul, South Korea",
+            "singapore": "Singapore",
+            "stockholm": "Stockholm, Sweden",
+            "sydney": "Sydney, Australia",
+            "tokyo": "Tokyo, Japan",
+            "toronto": "Toronto, Canada",
+            "vancouver": "Vancouver, Canada",
+            "vienna": "Vienna, Austria",
+            "zurich": "Zurich, Switzerland"
+        }
+        
+        for geo_id in sorted(geo_scope_ids):
+            display_name = city_name_map.get(geo_id, geo_id.replace("_", " ").title())
+            cities.append({
+                "id": geo_id,
+                "name": geo_id,
+                "displayName": display_name
+            })
+        
+        logger.info(f"✅ Retrieved {len(cities)} distinct cities")
+        return cities
+        
+    except Exception as e:
+        logger.error(f"Error getting distinct cities: {e}")
+        return []
+
+
