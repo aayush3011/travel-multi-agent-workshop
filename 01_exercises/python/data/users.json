@@ -1,0 +1,74 @@
+[
+  {
+    "id": "tony",
+    "userId": "tony",
+    "tenantId": "marvel",
+    "name": "Tony Stark",
+    "gender": "Male",
+    "age": 45,
+    "phone": "+1-310-555-0123",
+    "address": {
+      "street": "10880 Malibu Point",
+      "city": "Malibu",
+      "state": "California",
+      "zipCode": "90265",
+      "country": "USA"
+    },
+    "email": "tony.stark@starkindustries.com",
+    "createdAt": "2025-01-15T10:00:00Z"
+  },
+  {
+    "id": "steve",
+    "userId": "steve",
+    "tenantId": "marvel",
+    "name": "Steve Rogers",
+    "gender": "Male",
+    "age": 38,
+    "phone": "+1-212-555-0198",
+    "address": {
+      "street": "569 Leaman Place",
+      "city": "Brooklyn",
+      "state": "New York",
+      "zipCode": "11201",
+      "country": "USA"
+    },
+    "email": "steve.rogers@avengers.org",
+    "createdAt": "2025-01-16T10:00:00Z"
+  },
+  {
+    "id": "bruce",
+    "userId": "bruce",
+    "tenantId": "marvel",
+    "name": "Bruce Banner",
+    "gender": "Male",
+    "age": 42,
+    "phone": "+1-505-555-0147",
+    "address": {
+      "street": "1428 Elm Street",
+      "city": "Albuquerque",
+      "state": "New Mexico",
+      "zipCode": "87101",
+      "country": "USA"
+    },
+    "email": "bruce.banner@sciencelab.edu",
+    "createdAt": "2025-01-17T10:00:00Z"
+  },
+  {
+    "id": "peter",
+    "userId": "peter",
+    "tenantId": "marvel",
+    "name": "Peter Parker",
+    "gender": "Male",
+    "age": 23,
+    "phone": "+1-718-555-0192",
+    "address": {
+      "street": "20 Ingram Street",
+      "city": "Queens",
+      "state": "New York",
+      "zipCode": "11375",
+      "country": "USA"
+    },
+    "email": "peter.parker@dailybugle.com",
+    "createdAt": "2025-01-18T10:00:00Z"
+  }
+]

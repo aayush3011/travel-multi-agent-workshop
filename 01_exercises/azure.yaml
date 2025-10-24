@@ -1,0 +1,321 @@
+name: TravelAssistant
+metadata:
+  template: azd-init@1.5.1
+hooks:
+  preprovision:
+    posix:
+      shell: sh
+      interactive: false
+      continueOnError: false
+      run: |
+        # Check if OWNER_EMAIL is already set in azd environment
+        EXISTING_OWNER=$(azd env get-value OWNER_EMAIL 2>/dev/null || echo "")
+        if [ -z "$EXISTING_OWNER" ]; then
+          CURRENT_USER=$(az account show --query user.name -o tsv 2>/dev/null || echo "user@example.com")
+          echo "Auto-setting OWNER_EMAIL to: $CURRENT_USER"
+          azd env set OWNER_EMAIL "$CURRENT_USER"
+        else
+          echo "OWNER_EMAIL already set to: $EXISTING_OWNER"
+        fi
+        
+        # Set principalId from current Azure user
+        PRINCIPAL_ID=$(az ad signed-in-user show --query id -o tsv 2>/dev/null || echo "")
+        if [ -n "$PRINCIPAL_ID" ]; then
+          echo "Setting principalId to: $PRINCIPAL_ID"
+          azd env set principalId "$PRINCIPAL_ID"
+        else
+          echo "Could not get current user's object ID"
+        fi
+    windows:
+      shell: pwsh
+      interactive: false
+      continueOnError: false
+      run: |
+        # Set OWNER_EMAIL from current Azure user
+        try {
+          $currentUser = az account show --query user.name -o tsv
+          if ($currentUser -and $currentUser.Trim() -ne "") {
+            Write-Host "Setting OWNER_EMAIL to: $($currentUser.Trim())"
+            azd env set OWNER_EMAIL $currentUser.Trim()
+          } else {
+            Write-Host "Could not get current user, setting default"
+            azd env set OWNER_EMAIL "user@example.com"
+          }
+        } catch {
+          Write-Host "Could not get current user, setting default"
+          azd env set OWNER_EMAIL "user@example.com"
+        }
+        
+        # Set principalId from current Azure user
+        try {
+          $principalId = az ad signed-in-user show --query id -o tsv
+          if ($principalId -and $principalId.Trim() -ne "") {
+            Write-Host "Setting principalId to: $($principalId.Trim())"
+            azd env set principalId $principalId.Trim()
+          } else {
+            Write-Host "Could not get current user's object ID"
+          }
+        } catch {
+          Write-Host "Could not get current user's object ID"
+        }
+  postprovision:
+    posix:
+      shell: sh
+      interactive: true
+      continueOnError: false
+      run: |
+        echo "
+        COSMOSDB_ENDPOINT=\"$COSMOSDB_ENDPOINT\"
+        COSMOS_KEY=\"$COSMOS_KEY\"
+        COSMOS_DB_DATABASE_NAME=\"TravelAssistant\"
+        AZURE_OPENAI_ENDPOINT=\"$AZURE_OPENAI_ENDPOINT\"
+        AZURE_OPENAI_EMBEDDING_DEPLOYMENT=\"$AZURE_OPENAI_EMBEDDINGDEPLOYMENTID\"
+        AZURE_OPENAI_DEPLOYMENT=\"$AZURE_OPENAI_COMPLETIONSDEPLOYMENTID\"
+        AZURE_OPENAI_API_VERSION=\"2024-12-01-preview\"
+        MCP_AUTH_SECRET_KEY=\"travel-mcp-server-jwt-secret-for-local-development\"
+        MCP_AUTH_TOKEN=\"travel-server-dev-token-2024\"
+        MCP_SERVER_BASE_URL=\"http://localhost:8080\"
+        " > ./python/.env
+
+        echo "✅ Environment file created at ./python/.env"
+        
+        # Create environment file for MCP server
+        echo "
+        COSMOSDB_ENDPOINT=\"$COSMOSDB_ENDPOINT\"
+        COSMOS_KEY=\"$COSMOS_KEY\"
+        COSMOS_DB_DATABASE_NAME=\"TravelAssistant\"
+        AZURE_OPENAI_ENDPOINT=\"$AZURE_OPENAI_ENDPOINT\"
+        AZURE_OPENAI_EMBEDDING_DEPLOYMENT=\"$AZURE_OPENAI_EMBEDDINGDEPLOYMENTID\"
+        AZURE_OPENAI_DEPLOYMENT=\"$AZURE_OPENAI_COMPLETIONSDEPLOYMENTID\"
+        AZURE_OPENAI_API_VERSION=\"2024-12-01-preview\"
+        MCP_AUTH_SECRET_KEY=\"travel-mcp-server-jwt-secret-for-local-development\"
+        MCP_AUTH_TOKEN=\"travel-server-dev-token-2024\"
+        MCP_SERVER_BASE_URL=\"http://localhost:8080\"
+        " > ./mcp_server/.env
+
+        echo "✅ Environment file created at ./mcp_server/.env"
+        echo ""
+        echo "═══════════════════════════════════════════════════════════════"
+        echo "� Setting up Python environment..."
+        echo "═══════════════════════════════════════════════════════════════"
+        echo ""
+
+        # Setup Python API environment
+        echo "Setting up Python API environment..."
+        cd python
+        
+        # Check if virtual environment exists, create if not
+        if [ ! -d "venv" ]; then
+            echo "Creating Python virtual environment..."
+            python3 -m venv venv
+        fi
+
+        # Activate virtual environment
+        echo "Activating Python virtual environment..."
+        source venv/bin/activate
+
+        # Install requirements
+        echo "Installing Python dependencies..."
+        if [ -f "src/app/requirements.txt" ]; then
+            python -m pip install --upgrade pip
+            python -m pip install -r src/app/requirements.txt
+        else
+            echo "⚠️  requirements.txt not found, installing basic dependencies..."
+            python -m pip install --upgrade pip
+            python -m pip install azure-cosmos azure-identity azure-openai python-dotenv openai
+        fi
+
+        echo ""
+        echo "═══════════════════════════════════════════════════════════════"
+        echo "� Data Loading Options"
+        echo "═══════════════════════════════════════════════════════════════"
+        echo ""
+        
+        # Ask user if they want to load sample data
+        echo "Do you want to load sample data into Cosmos DB? (y/n)"
+        read -p "Enter your choice: " load_data_choice
+        
+        if [ "$load_data_choice" = "y" ] || [ "$load_data_choice" = "Y" ] || [ "$load_data_choice" = "yes" ] || [ "$load_data_choice" = "Yes" ]; then
+            echo ""
+            echo "═══════════════════════════════════════════════════════════════"
+            echo "�📋 Loading sample data into Cosmos DB..."
+            echo "═══════════════════════════════════════════════════════════════"
+            echo ""
+
+            # Load data into Cosmos DB (from python directory)
+            python data/seed_data.py
+            
+            echo ""
+            echo "✅ Data loading complete!"
+        else
+            echo ""
+            echo "⏭️  Skipping data loading as requested."
+        fi
+
+        # Go back to root and setup MCP server environment
+        cd ..
+        echo ""
+        echo "═══════════════════════════════════════════════════════════════"
+        echo "🛠️ Setting up MCP Server environment..."
+        echo "═══════════════════════════════════════════════════════════════"
+        echo ""
+
+        cd mcp_server
+        
+        # Check if virtual environment exists, create if not
+        if [ ! -d "venv" ]; then
+            echo "Creating MCP Server virtual environment..."
+            python3 -m venv venv
+        fi
+
+        # Activate virtual environment
+        echo "Activating MCP Server virtual environment..."
+        source venv/bin/activate
+
+        # Install requirements
+        echo "Installing MCP Server dependencies..."
+        if [ -f "requirements.txt" ]; then
+            python -m pip install --upgrade pip
+            python -m pip install -r requirements.txt
+        else
+            echo "⚠️  requirements.txt not found, installing basic dependencies..."
+            python -m pip install --upgrade pip
+            python -m pip install azure-cosmos azure-identity azure-openai python-dotenv openai
+        fi
+
+        cd ..
+
+        echo ""
+        echo "✅ Data loading complete!"
+        echo ""
+        echo "═══════════════════════════════════════════════════════════════"
+
+    windows:
+      shell: pwsh
+      interactive: true
+      continueOnError: false
+      run: |
+        echo "
+        COSMOSDB_ENDPOINT=""$env:COSMOSDB_ENDPOINT""
+        COSMOS_KEY=""$env:COSMOS_KEY""
+        COSMOS_DB_DATABASE_NAME=""TravelAssistant""
+        AZURE_OPENAI_ENDPOINT=""$env:AZURE_OPENAI_ENDPOINT""
+        AZURE_OPENAI_EMBEDDING_DEPLOYMENT=""$env:AZURE_OPENAI_EMBEDDINGDEPLOYMENTID""
+        AZURE_OPENAI_DEPLOYMENT=""$env:AZURE_OPENAI_COMPLETIONSDEPLOYMENTID""
+        AZURE_OPENAI_API_VERSION=""2024-12-01-preview""
+        MCP_AUTH_SECRET_KEY=""travel-mcp-server-jwt-secret-for-local-development""
+        MCP_AUTH_TOKEN=""travel-server-dev-token-2024""
+        MCP_SERVER_BASE_URL=""http://localhost:8080""
+        " > ./python/.env
+
+        Write-Host "✅ Environment file created at ./python/.env"
+        
+        # Create environment file for MCP server
+        echo "
+        COSMOSDB_ENDPOINT=""$env:COSMOSDB_ENDPOINT""
+        COSMOS_KEY=""$env:COSMOS_KEY""
+        COSMOS_DB_DATABASE_NAME=""TravelAssistant""
+        AZURE_OPENAI_ENDPOINT=""$env:AZURE_OPENAI_ENDPOINT""
+        AZURE_OPENAI_EMBEDDING_DEPLOYMENT=""$env:AZURE_OPENAI_EMBEDDINGDEPLOYMENTID""
+        AZURE_OPENAI_DEPLOYMENT=""$env:AZURE_OPENAI_COMPLETIONSDEPLOYMENTID""
+        AZURE_OPENAI_API_VERSION=""2024-12-01-preview""
+        MCP_AUTH_SECRET_KEY=""travel-mcp-server-jwt-secret-for-local-development""
+        MCP_AUTH_TOKEN=""travel-server-dev-token-2024""
+        MCP_SERVER_BASE_URL=""http://localhost:8080""
+        " > ./mcp_server/.env
+
+        Write-Host "✅ Environment file created at ./mcp_server/.env"
+        Write-Host ""
+        Write-Host "═══════════════════════════════════════════════════════════════"
+        Write-Host "� Setting up Python environment..."
+        Write-Host "═══════════════════════════════════════════════════════════════"
+        Write-Host ""
+
+        # Setup Python API environment
+        Write-Host "Setting up Python API environment..."
+        Set-Location python
+        
+        # Check if virtual environment exists, create if not
+        if (-not (Test-Path "venv")) {
+            Write-Host "Creating Python virtual environment..."
+            python -m venv venv
+        }
+
+        # Activate virtual environment
+        Write-Host "Activating Python virtual environment..."
+        & ".\venv\Scripts\Activate.ps1"
+
+        # Install requirements
+        Write-Host "Installing Python dependencies..."
+        if (Test-Path "src\app\requirements.txt") {
+            python -m pip install --upgrade pip
+            python -m pip install -r src\app\requirements.txt
+        } else {
+            Write-Host "⚠️  requirements.txt not found, installing basic dependencies..."
+            python -m pip install --upgrade pip
+            python -m pip install azure-cosmos azure-identity azure-openai python-dotenv openai
+        }
+
+        Write-Host ""
+        Write-Host "═══════════════════════════════════════════════════════════════"
+        Write-Host "📋 Data Loading Options"
+        Write-Host "═══════════════════════════════════════════════════════════════"
+        Write-Host ""
+        
+        # Ask user if they want to load sample data
+        $loadDataChoice = Read-Host "Do you want to load sample data into Cosmos DB? (y/n)"
+        
+        if ($loadDataChoice -eq "y" -or $loadDataChoice -eq "Y" -or $loadDataChoice -eq "yes" -or $loadDataChoice -eq "Yes") {
+            Write-Host ""
+            Write-Host "═══════════════════════════════════════════════════════════════"
+            Write-Host "📋 Loading sample data into Cosmos DB..."
+            Write-Host "═══════════════════════════════════════════════════════════════"
+            Write-Host ""
+
+            # Load data into Cosmos DB (from python directory)
+            python data\seed_data.py
+            
+            Write-Host ""
+            Write-Host "✅ Data loading complete!"
+        } else {
+            Write-Host ""
+            Write-Host "⏭️  Skipping data loading as requested."
+        }
+
+        # Go back to root and setup MCP server environment
+        Set-Location ..
+        Write-Host ""
+        Write-Host "═══════════════════════════════════════════════════════════════"
+        Write-Host "🛠️ Setting up MCP Server environment..."
+        Write-Host "═══════════════════════════════════════════════════════════════"
+        Write-Host ""
+
+        Set-Location mcp_server
+        
+        # Check if virtual environment exists, create if not
+        if (-not (Test-Path "venv")) {
+            Write-Host "Creating MCP Server virtual environment..."
+            python -m venv venv
+        }
+
+        # Activate virtual environment
+        Write-Host "Activating MCP Server virtual environment..."
+        & ".\venv\Scripts\Activate.ps1"
+
+        # Install requirements
+        Write-Host "Installing MCP Server dependencies..."
+        if (Test-Path "requirements.txt") {
+            python -m pip install --upgrade pip
+            python -m pip install -r requirements.txt
+        } else {
+            Write-Host "⚠️  requirements.txt not found, installing basic dependencies..."
+            python -m pip install --upgrade pip
+            python -m pip install azure-cosmos azure-identity azure-openai python-dotenv openai
+        }
+
+        Set-Location ..
+
+        Write-Host ""
+        Write-Host "✅ Data loading complete!"
+        Write-Host ""
+        Write-Host "═══════════════════════════════════════════════════════════════"

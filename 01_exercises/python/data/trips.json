@@ -1,0 +1,566 @@
+[
+  {
+    "id": "trip_tony_paris_001",
+    "tripId": "trip_tony_paris_001",
+    "userId": "tony",
+    "tenantId": "marvel",
+    "destination": "Paris, France",
+    "startDate": "2025-11-15",
+    "endDate": "2025-11-19",
+    "tripDuration": 5,
+    "status": "confirmed",
+    "days": [
+      {
+        "dayNumber": 1,
+        "date": "2025-11-15",
+        "morning": {
+          "activity": "Visit Louvre Museum",
+          "time": "09:00-12:00",
+          "placeId": "activity_paris_0001",
+          "notes": "Pre-book tickets online to skip the line"
+        },
+        "lunch": {
+          "activity": "Paris Fine Dining",
+          "time": "12:30-14:00",
+          "placeId": "restaurant_paris_0007",
+          "notes": "Michelin-starred restaurant near the museum"
+        },
+        "afternoon": {
+          "activity": "Eiffel Tower visit",
+          "time": "15:00-17:30",
+          "placeId": "activity_paris_0005",
+          "notes": "Go to the top for panoramic views"
+        },
+        "dinner": {
+          "activity": "Paris Bistro",
+          "time": "19:30-21:30",
+          "placeId": "restaurant_paris_0001",
+          "notes": "Traditional French cuisine"
+        },
+        "accommodation": {
+          "activity": "Hôtel Ritz Paris",
+          "placeId": "hotel_paris_0001",
+          "notes": "Luxury accommodation at Place Vendôme"
+        }
+      },
+      {
+        "dayNumber": 2,
+        "date": "2025-11-16",
+        "morning": {
+          "activity": "Notre-Dame Cathedral area",
+          "time": "09:00-11:00",
+          "placeId": "activity_paris_0006",
+          "notes": "Explore Île de la Cité"
+        },
+        "lunch": {
+          "activity": "Paris Café",
+          "time": "12:00-13:30",
+          "placeId": "restaurant_paris_0005",
+          "notes": "Riverside café with great coffee"
+        },
+        "afternoon": {
+          "activity": "Musée d'Orsay",
+          "time": "14:00-17:00",
+          "placeId": "activity_paris_0002",
+          "notes": "Impressionist art collection"
+        },
+        "dinner": {
+          "activity": "Paris Sushi Bar",
+          "time": "19:00-21:00",
+          "placeId": "restaurant_paris_0003",
+          "notes": "High-end Japanese in Paris"
+        },
+        "accommodation": {
+          "activity": "Hôtel Ritz Paris",
+          "placeId": "hotel_paris_0001"
+        }
+      },
+      {
+        "dayNumber": 3,
+        "date": "2025-11-17",
+        "morning": {
+          "activity": "Versailles Palace",
+          "time": "08:30-13:00",
+          "placeId": "activity_paris_0008",
+          "notes": "Day trip to Versailles - gardens and palace"
+        },
+        "lunch": {
+          "activity": "Paris Mediterranean Grill",
+          "time": "13:30-15:00",
+          "placeId": "restaurant_paris_0019",
+          "notes": "Healthy Mediterranean lunch"
+        },
+        "afternoon": {
+          "activity": "Champs-Élysées shopping",
+          "time": "15:30-18:00",
+          "placeId": "activity_paris_0015",
+          "notes": "Window shopping and Arc de Triomphe"
+        },
+        "dinner": {
+          "activity": "Paris Steakhouse",
+          "time": "19:30-22:00",
+          "placeId": "restaurant_paris_0004",
+          "notes": "Premium cuts and wine pairing"
+        },
+        "accommodation": {
+          "activity": "Hôtel Ritz Paris",
+          "placeId": "hotel_paris_0001"
+        }
+      },
+      {
+        "dayNumber": 4,
+        "date": "2025-11-18",
+        "morning": {
+          "activity": "Montmartre and Sacré-Cœur",
+          "time": "09:00-12:00",
+          "placeId": "activity_paris_0017",
+          "notes": "Artistic neighborhood and basilica"
+        },
+        "lunch": {
+          "activity": "Paris Wine Bar",
+          "time": "12:30-14:30",
+          "placeId": "restaurant_paris_0013",
+          "notes": "Wine tasting with charcuterie"
+        },
+        "afternoon": {
+          "activity": "Rodin Museum and gardens",
+          "time": "15:00-17:30",
+          "placeId": "activity_paris_0004",
+          "notes": "Sculpture garden visit"
+        },
+        "dinner": {
+          "activity": "Paris Trattoria",
+          "time": "19:00-21:00",
+          "placeId": "restaurant_paris_0002",
+          "notes": "Italian comfort food"
+        },
+        "accommodation": {
+          "activity": "Hôtel Ritz Paris",
+          "placeId": "hotel_paris_0001"
+        }
+      },
+      {
+        "dayNumber": 5,
+        "date": "2025-11-19",
+        "morning": {
+          "activity": "Luxembourg Gardens",
+          "time": "09:00-11:00",
+          "placeId": "activity_paris_0010",
+          "notes": "Peaceful morning walk before departure"
+        },
+        "lunch": {
+          "activity": "Paris Bistro",
+          "time": "11:30-13:00",
+          "placeId": "restaurant_paris_0001",
+          "notes": "Final Parisian meal before flight"
+        },
+        "afternoon": {
+          "activity": "Departure",
+          "time": "14:00",
+          "notes": "Transfer to Charles de Gaulle Airport"
+        }
+      }
+    ],
+    "createdAt": "2025-10-10T14:00:00Z"
+  },
+  {
+    "id": "trip_steve_washington_dc_001",
+    "tripId": "trip_steve_washington_dc_001",
+    "userId": "steve",
+    "tenantId": "marvel",
+    "destination": "Washington DC, USA",
+    "startDate": "2025-12-05",
+    "endDate": "2025-12-07",
+    "tripDuration": 3,
+    "status": "planning",
+    "days": [
+      {
+        "dayNumber": 1,
+        "date": "2025-12-05",
+        "morning": {
+          "activity": "National Mall monuments",
+          "time": "09:00-12:00",
+          "placeId": "activity_washington_dc_0017",
+          "notes": "Lincoln Memorial, Washington Monument"
+        },
+        "lunch": {
+          "activity": "Washington Dc Café",
+          "time": "12:30-13:30",
+          "placeId": "restaurant_washington_dc_0005",
+          "notes": "Quick lunch near the mall"
+        },
+        "afternoon": {
+          "activity": "Smithsonian National Museum",
+          "time": "14:00-17:00",
+          "placeId": "activity_washington_dc_0001",
+          "notes": "American history exhibition"
+        },
+        "dinner": {
+          "activity": "Washington Dc Bistro",
+          "time": "18:30-20:00",
+          "placeId": "restaurant_washington_dc_0001",
+          "notes": "Classic American dinner"
+        },
+        "accommodation": {
+          "activity": "Washington Dc Grand Hotel",
+          "placeId": "hotel_washington_dc_0001",
+          "notes": "Central location near monuments"
+        }
+      },
+      {
+        "dayNumber": 2,
+        "date": "2025-12-06",
+        "morning": {
+          "activity": "Arlington National Cemetery",
+          "time": "08:30-11:30",
+          "placeId": "activity_washington_dc_0007",
+          "notes": "Changing of the Guard ceremony"
+        },
+        "lunch": {
+          "activity": "Washington Dc Gastropub",
+          "time": "12:00-13:30",
+          "placeId": "restaurant_washington_dc_0008",
+          "notes": "Local craft beers and comfort food"
+        },
+        "afternoon": {
+          "activity": "World War II Memorial",
+          "time": "14:00-16:00",
+          "placeId": "activity_washington_dc_0017",
+          "notes": "Pay respects at memorial"
+        },
+        "dinner": {
+          "activity": "Washington Dc Steakhouse",
+          "time": "18:30-20:30",
+          "placeId": "restaurant_washington_dc_0004",
+          "notes": "Traditional American steakhouse"
+        },
+        "accommodation": {
+          "activity": "Washington Dc Grand Hotel",
+          "placeId": "hotel_washington_dc_0001"
+        }
+      },
+      {
+        "dayNumber": 3,
+        "date": "2025-12-07",
+        "morning": {
+          "activity": "National Gallery",
+          "time": "09:00-12:00",
+          "placeId": "activity_washington_dc_0002",
+          "notes": "Free admission, American art"
+        },
+        "lunch": {
+          "activity": "Washington Dc Burger Bar",
+          "time": "12:30-13:30",
+          "placeId": "restaurant_washington_dc_0015",
+          "notes": "Classic burgers before departure"
+        },
+        "afternoon": {
+          "activity": "Departure",
+          "time": "14:30",
+          "notes": "Transfer to Reagan National Airport"
+        }
+      }
+    ],
+    "createdAt": "2025-10-12T10:00:00Z"
+  },
+  {
+    "id": "trip_peter_london_001",
+    "tripId": "trip_peter_london_001",
+    "userId": "peter",
+    "tenantId": "marvel",
+    "destination": "London, UK",
+    "startDate": "2025-12-15",
+    "endDate": "2025-12-18",
+    "tripDuration": 4,
+    "status": "planning",
+    "days": [
+      {
+        "dayNumber": 1,
+        "date": "2025-12-15",
+        "morning": {
+          "activity": "British Museum",
+          "time": "10:00-13:00",
+          "placeId": "activity_london_0001",
+          "notes": "Free admission, ancient artifacts"
+        },
+        "lunch": {
+          "activity": "London Gastropub",
+          "time": "13:30-15:00",
+          "placeId": "restaurant_london_0008",
+          "notes": "Fish and chips with local ale"
+        },
+        "afternoon": {
+          "activity": "Tower of London",
+          "time": "15:30-18:00",
+          "placeId": "activity_london_0007",
+          "notes": "Crown jewels and history"
+        },
+        "dinner": {
+          "activity": "London Pizzeria",
+          "time": "19:00-20:30",
+          "placeId": "restaurant_london_0006",
+          "notes": "Budget-friendly Italian"
+        },
+        "accommodation": {
+          "activity": "Citizen M Tower of London",
+          "placeId": "hotel_london_0008",
+          "notes": "Modern, affordable hotel"
+        }
+      },
+      {
+        "dayNumber": 2,
+        "date": "2025-12-16",
+        "morning": {
+          "activity": "Westminster Abbey",
+          "time": "09:00-11:30",
+          "placeId": "activity_london_0006",
+          "notes": "Royal church and tombs"
+        },
+        "lunch": {
+          "activity": "London Café",
+          "time": "12:00-13:00",
+          "placeId": "restaurant_london_0005",
+          "notes": "Quick sandwich and coffee"
+        },
+        "afternoon": {
+          "activity": "London Eye observation",
+          "time": "14:00-15:30",
+          "placeId": "activity_london_0013",
+          "notes": "Thames river views"
+        },
+        "dinner": {
+          "activity": "London Burger Bar",
+          "time": "18:00-19:30",
+          "placeId": "restaurant_london_0015",
+          "notes": "Casual dinner"
+        },
+        "accommodation": {
+          "activity": "Citizen M Tower of London",
+          "placeId": "hotel_london_0008"
+        }
+      },
+      {
+        "dayNumber": 3,
+        "date": "2025-12-17",
+        "morning": {
+          "activity": "Camden Market",
+          "time": "10:00-13:00",
+          "placeId": "activity_london_0015",
+          "notes": "Alternative culture and street food"
+        },
+        "lunch": {
+          "activity": "London Street Market food",
+          "time": "13:00-14:00",
+          "placeId": "restaurant_london_0009",
+          "notes": "Street food at Camden"
+        },
+        "afternoon": {
+          "activity": "Tate Modern",
+          "time": "14:30-17:00",
+          "placeId": "activity_london_0004",
+          "notes": "Free modern art museum"
+        },
+        "dinner": {
+          "activity": "London Indian Curry House",
+          "time": "18:30-20:00",
+          "placeId": "restaurant_london_0018",
+          "notes": "Brick Lane curry"
+        },
+        "accommodation": {
+          "activity": "Citizen M Tower of London",
+          "placeId": "hotel_london_0008"
+        }
+      },
+      {
+        "dayNumber": 4,
+        "date": "2025-12-18",
+        "morning": {
+          "activity": "Hyde Park walk",
+          "time": "09:00-11:00",
+          "placeId": "activity_london_0009",
+          "notes": "Morning stroll before departure"
+        },
+        "lunch": {
+          "activity": "London Bistro",
+          "time": "11:30-12:30",
+          "placeId": "restaurant_london_0001",
+          "notes": "Final British meal"
+        },
+        "afternoon": {
+          "activity": "Departure",
+          "time": "14:00",
+          "notes": "Transfer to Heathrow Airport"
+        }
+      }
+    ],
+    "createdAt": "2025-10-16T09:00:00Z"
+  },
+  {
+    "id": "trip_bruce_tokyo_001",
+    "tripId": "trip_bruce_tokyo_001",
+    "userId": "bruce",
+    "tenantId": "marvel",
+    "destination": "Tokyo, Japan",
+    "startDate": "2026-02-20",
+    "endDate": "2026-02-22",
+    "tripDuration": 3,
+    "status": "planning",
+    "days": [
+      {
+        "dayNumber": 1,
+        "date": "2026-02-20",
+        "morning": {
+          "activity": "Senso-ji Temple",
+          "time": "08:00-10:00",
+          "placeId": "activity_tokyo_0006",
+          "notes": "Ancient Buddhist temple in Asakusa"
+        },
+        "lunch": {
+          "activity": "Tokyo Ramen Shop",
+          "time": "11:00-12:00",
+          "placeId": "restaurant_tokyo_0014",
+          "notes": "Authentic tonkotsu ramen"
+        },
+        "afternoon": {
+          "activity": "Tokyo Science Museum",
+          "time": "13:00-16:00",
+          "placeId": "activity_tokyo_0003",
+          "notes": "Interactive science exhibits"
+        },
+        "dinner": {
+          "activity": "Tokyo Sushi Bar",
+          "time": "18:00-20:00",
+          "placeId": "restaurant_tokyo_0003",
+          "notes": "Omakase experience"
+        },
+        "accommodation": {
+          "activity": "Park Hyatt Tokyo",
+          "placeId": "hotel_tokyo_0003",
+          "notes": "Iconic hotel from Lost in Translation"
+        }
+      },
+      {
+        "dayNumber": 2,
+        "date": "2026-02-21",
+        "morning": {
+          "activity": "Meiji Shrine",
+          "time": "08:30-10:30",
+          "placeId": "activity_tokyo_0009",
+          "notes": "Peaceful forest shrine"
+        },
+        "lunch": {
+          "activity": "Tokyo Noodle House",
+          "time": "11:30-12:30",
+          "placeId": "restaurant_tokyo_0009",
+          "notes": "Quick udon lunch"
+        },
+        "afternoon": {
+          "activity": "Shibuya Crossing observation",
+          "time": "13:00-15:00",
+          "placeId": "activity_tokyo_0013",
+          "notes": "Famous intersection and shopping"
+        },
+        "dinner": {
+          "activity": "Tokyo Fine Dining",
+          "time": "18:30-21:00",
+          "placeId": "restaurant_tokyo_0007",
+          "notes": "Kaiseki multi-course meal"
+        },
+        "accommodation": {
+          "activity": "Park Hyatt Tokyo",
+          "placeId": "hotel_tokyo_0003"
+        }
+      },
+      {
+        "dayNumber": 3,
+        "date": "2026-02-22",
+        "morning": {
+          "activity": "Tsukiji Outer Market",
+          "time": "07:00-09:00",
+          "placeId": "activity_tokyo_0015",
+          "notes": "Fresh seafood breakfast"
+        },
+        "lunch": {
+          "activity": "Tokyo Dim Sum Palace",
+          "time": "11:00-12:30",
+          "placeId": "restaurant_tokyo_0020",
+          "notes": "Chinese brunch before flight"
+        },
+        "afternoon": {
+          "activity": "Departure",
+          "time": "14:00",
+          "notes": "Transfer to Narita Airport"
+        }
+      }
+    ],
+    "createdAt": "2025-10-15T11:30:00Z"
+  },
+  {
+    "id": "trip_tony_barcelona_001",
+    "tripId": "trip_tony_barcelona_001",
+    "userId": "tony",
+    "tenantId": "marvel",
+    "destination": "Barcelona, Spain",
+    "startDate": "2026-03-10",
+    "endDate": "2026-03-11",
+    "tripDuration": 2,
+    "status": "planning",
+    "days": [
+      {
+        "dayNumber": 1,
+        "date": "2026-03-10",
+        "morning": {
+          "activity": "Sagrada Familia",
+          "time": "09:00-11:30",
+          "placeId": "activity_barcelona_0005",
+          "notes": "Gaudí's masterpiece cathedral"
+        },
+        "lunch": {
+          "activity": "Barcelona Tapas Bar",
+          "time": "12:00-13:30",
+          "placeId": "restaurant_barcelona_0013",
+          "notes": "Traditional Spanish tapas"
+        },
+        "afternoon": {
+          "activity": "Park Güell",
+          "time": "14:30-17:00",
+          "placeId": "activity_barcelona_0009",
+          "notes": "Gaudí's colorful park with city views"
+        },
+        "dinner": {
+          "activity": "Barcelona Seafood Grill",
+          "time": "19:00-21:00",
+          "placeId": "restaurant_barcelona_0010",
+          "notes": "Fresh Mediterranean seafood"
+        },
+        "accommodation": {
+          "activity": "Barcelona Grand Hotel",
+          "placeId": "hotel_barcelona_0001",
+          "notes": "Luxury hotel on Passeig de Gràcia"
+        }
+      },
+      {
+        "dayNumber": 2,
+        "date": "2026-03-11",
+        "morning": {
+          "activity": "La Rambla and Gothic Quarter",
+          "time": "09:00-12:00",
+          "placeId": "activity_barcelona_0019",
+          "notes": "Historic streets and Boqueria market"
+        },
+        "lunch": {
+          "activity": "Barcelona Pizzeria",
+          "time": "12:30-13:30",
+          "placeId": "restaurant_barcelona_0006",
+          "notes": "Quick lunch before departure"
+        },
+        "afternoon": {
+          "activity": "Departure",
+          "time": "15:00",
+          "notes": "Transfer to Barcelona-El Prat Airport"
+        }
+      }
+    ],
+    "createdAt": "2025-10-17T13:00:00Z"
+  }
+]
