@@ -676,11 +676,10 @@ def get_active_agent(state: MessagesState, config) -> str:
             logger.error(f"Error retrieving active agent from DB: {e}")
             activeAgent = "unknown"
     
-    # **FIX: If orchestrator transfers to itself, go to human instead**
-    # This prevents infinite loops where orchestrator calls itself repeatedly
-    if activeAgent in [None, "unknown", "orchestrator"]:
-        logger.info(f"🛑 activeAgent is '{activeAgent}', routing to human for user input")
-        activeAgent = "human"
+    # If activeAgent is unknown or None, default to orchestrator
+    if activeAgent in [None, "unknown"]:
+        logger.info(f"� activeAgent is '{activeAgent}', defaulting to Orchestrator")
+        activeAgent = "Orchestrator"
     
     return activeAgent
 

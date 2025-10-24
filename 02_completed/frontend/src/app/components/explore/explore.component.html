@@ -217,7 +217,7 @@
           <option value="all">All Places</option>
           <option value="hotel">Hotels</option>
           <option value="restaurant">Restaurants</option>
-          <option value="attraction">Attractions</option>
+          <option value="activity">Activities</option>
         </select>
         
         <!-- Theme -->
@@ -231,47 +231,149 @@
         
         <!-- Budget -->
         <label class="text-sm font-medium mt-2">Budget</label>
-        <select 
-          [(ngModel)]="filters.budget"
-          (change)="applyFilters()"
-          class="px-3 py-2 rounded-xl border focus:ring-2 focus:ring-cosmos-primary focus:border-transparent"
-        >
-          <option value="any">Any</option>
-          <option value="budget">Budget ($)</option>
-          <option value="moderate">Moderate ($$)</option>
-          <option value="upscale">Upscale ($$$)</option>
-          <option value="luxury">Luxury ($$$$)</option>
-        </select>
+        <div class="space-y-2">
+          <label class="flex items-center cursor-pointer">
+            <input 
+              type="checkbox" 
+              [checked]="filters.budget.includes('budget')"
+              (change)="toggleBudgetFilter('budget')"
+              class="mr-2 rounded"
+            />
+            <span class="text-sm">Budget ($)</span>
+          </label>
+          <label class="flex items-center cursor-pointer">
+            <input 
+              type="checkbox" 
+              [checked]="filters.budget.includes('moderate')"
+              (change)="toggleBudgetFilter('moderate')"
+              class="mr-2 rounded"
+            />
+            <span class="text-sm">Moderate ($$)</span>
+          </label>
+          <label class="flex items-center cursor-pointer">
+            <input 
+              type="checkbox" 
+              [checked]="filters.budget.includes('upscale')"
+              (change)="toggleBudgetFilter('upscale')"
+              class="mr-2 rounded"
+            />
+            <span class="text-sm">Upscale ($$$)</span>
+          </label>
+          <label class="flex items-center cursor-pointer">
+            <input 
+              type="checkbox" 
+              [checked]="filters.budget.includes('luxury')"
+              (change)="toggleBudgetFilter('luxury')"
+              class="mr-2 rounded"
+            />
+            <span class="text-sm">Luxury ($$$$)</span>
+          </label>
+        </div>
         
         <!-- Dietary -->
-        <label class="text-sm font-medium mt-2">Dietary</label>
-        <select 
-          [(ngModel)]="filters.dietary"
-          (change)="applyFilters()"
-          class="px-3 py-2 rounded-xl border focus:ring-2 focus:ring-cosmos-primary focus:border-transparent"
-        >
-          <option value="any">Any</option>
-          <option value="vegetarian">Vegetarian</option>
-          <option value="vegan">Vegan</option>
-          <option value="gluten-free">Gluten-free</option>
-        </select>
+        <label class="text-sm font-medium mt-3">Dietary</label>
+        <div class="space-y-2">
+          <label class="flex items-center cursor-pointer">
+            <input 
+              type="checkbox" 
+              [checked]="filters.dietary.includes('vegetarian')"
+              (change)="toggleDietaryFilter('vegetarian')"
+              class="mr-2 rounded"
+            />
+            <span class="text-sm">Vegetarian</span>
+          </label>
+          <label class="flex items-center cursor-pointer">
+            <input 
+              type="checkbox" 
+              [checked]="filters.dietary.includes('vegan')"
+              (change)="toggleDietaryFilter('vegan')"
+              class="mr-2 rounded"
+            />
+            <span class="text-sm">Vegan</span>
+          </label>
+          <label class="flex items-center cursor-pointer">
+            <input 
+              type="checkbox" 
+              [checked]="filters.dietary.includes('gluten-free')"
+              (change)="toggleDietaryFilter('gluten-free')"
+              class="mr-2 rounded"
+            />
+            <span class="text-sm">Gluten-free</span>
+          </label>
+          <label class="flex items-center cursor-pointer">
+            <input 
+              type="checkbox" 
+              [checked]="filters.dietary.includes('seafood')"
+              (change)="toggleDietaryFilter('seafood')"
+              class="mr-2 rounded"
+            />
+            <span class="text-sm">🐟 Seafood</span>
+          </label>
+        </div>
         
         <!-- Accessibility -->
-        <label class="text-sm font-medium mt-2">Accessibility</label>
-        <select 
-          [(ngModel)]="filters.accessibility"
-          (change)="applyFilters()"
-          class="px-3 py-2 rounded-xl border focus:ring-2 focus:ring-cosmos-primary focus:border-transparent"
-        >
-          <option value="any">Any</option>
-          <option value="wheelchair">Wheelchair-friendly</option>
-          <option value="low-stairs">Low stairs</option>
-        </select>
+        <label class="text-sm font-medium mt-3">Accessibility</label>
+        <div class="space-y-2">
+          <label class="flex items-center cursor-pointer">
+            <input 
+              type="checkbox" 
+              [checked]="filters.accessibility.includes('wheelchair-friendly')"
+              (change)="toggleAccessibilityFilter('wheelchair-friendly')"
+              class="mr-2 rounded"
+            />
+            <span class="text-sm">♿ Wheelchair-friendly</span>
+          </label>
+          <label class="flex items-center cursor-pointer">
+            <input 
+              type="checkbox" 
+              [checked]="filters.accessibility.includes('elevator-access')"
+              (change)="toggleAccessibilityFilter('elevator-access')"
+              class="mr-2 rounded"
+            />
+            <span class="text-sm">🛗 Elevator access</span>
+          </label>
+          <label class="flex items-center cursor-pointer">
+            <input 
+              type="checkbox" 
+              [checked]="filters.accessibility.includes('accessible-restroom')"
+              (change)="toggleAccessibilityFilter('accessible-restroom')"
+              class="mr-2 rounded"
+            />
+            <span class="text-sm">🚻 Accessible restroom</span>
+          </label>
+          <label class="flex items-center cursor-pointer">
+            <input 
+              type="checkbox" 
+              [checked]="filters.accessibility.includes('step-free-entrance')"
+              (change)="toggleAccessibilityFilter('step-free-entrance')"
+              class="mr-2 rounded"
+            />
+            <span class="text-sm">🚪 Step-free entrance</span>
+          </label>
+          <label class="flex items-center cursor-pointer">
+            <input 
+              type="checkbox" 
+              [checked]="filters.accessibility.includes('service-animal-friendly')"
+              (change)="toggleAccessibilityFilter('service-animal-friendly')"
+              class="mr-2 rounded"
+            />
+            <span class="text-sm">🐕‍🦺 Service animals welcome</span>
+          </label>
+          <label class="flex items-center cursor-pointer">
+            <input 
+              type="checkbox" 
+              [checked]="filters.accessibility.includes('accessible-parking')"
+              (change)="toggleAccessibilityFilter('accessible-parking')"
+              class="mr-2 rounded"
+            />
+            <span class="text-sm">🅿️  Accessible parking</span>
+          </label>
+        </div>
         
         <!-- Reset Button -->
         <button 
           (click)="resetFilters()"
-          class="mt-3 px-3 py-2 rounded-xl border border-cosmos-primary text-cosmos-primary hover:bg-cosmos-primary hover:text-white transition"
+          class="mt-4 px-3 py-2 rounded-xl border border-cosmos-primary text-cosmos-primary hover:bg-cosmos-primary hover:text-white transition w-full"
         >
           Reset Filters
         </button>
@@ -283,7 +385,7 @@
       <div class="flex items-center justify-between">
         <div>
           <h2 class="text-xl font-semibold tracking-tight">
-            {{ selectedCity ? 'Explore ' + selectedCity : 'Select a city to explore' }}
+            {{ selectedCity ? 'Explore ' + formatCityName(selectedCity) : 'Select a city to explore' }}
           </h2>
           <p class="text-sm text-gray-500">
             {{ selectedCity ? 'Discover amazing places' : 'Choose a city and click "Start a trip" to begin' }}
@@ -329,7 +431,7 @@
     (click)="openChat()"
     class="fixed right-4 bottom-24 md:right-8 md:bottom-8 h-12 px-4 rounded-full shadow-lg bg-cosmos-primary text-white flex items-center gap-2 hover:bg-blue-600 transition z-40"
   >
-    <span>Chat with Concierge</span>
+    <span>Chat with Assistant</span>
     <span class="inline-block">💬</span>
   </button>
 
@@ -350,7 +452,7 @@
     >
       <!-- Header -->
       <div class="h-16 border-b flex items-center justify-between px-4 bg-gradient-to-r from-cosmos-primary to-cosmos-accent text-white">
-        <div class="font-semibold">Plan with Concierge 🤖</div>
+        <div class="font-semibold">Chat with Assistant 🤖</div>
         <button 
           (click)="closeChat()"
           class="px-3 py-1.5 rounded-xl border border-white text-white hover:bg-white hover:text-cosmos-primary transition"
@@ -361,9 +463,9 @@
       
       <!-- Messages -->
       <div class="h-[calc(100%-8rem)] overflow-y-auto p-4 space-y-3 bg-gray-50">
-        <div *ngIf="messages.length === 0" class="text-center text-gray-500 mt-8">
+        <div *ngIf="!messages || messages.length === 0" class="text-center text-gray-500 mt-8">
           <div class="text-4xl mb-4">👋</div>
-          <p>Start a conversation with your travel concierge!</p>
+          <p>Start a conversation with your travel assistant!</p>
           <p class="text-sm mt-2">Ask about hotels, restaurants, or activities.</p>
         </div>
         

@@ -485,7 +485,7 @@ def query_memories(
     AND c.tenantId = @tenantId
     AND c.salience >= @minSalience
     {type_filter}
-    ORDER BY c.createdAt DESC
+    ORDER BY c.extractedAt DESC
     """
     
     items = list(memories_container.query_items(

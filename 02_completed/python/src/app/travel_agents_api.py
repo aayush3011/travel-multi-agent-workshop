@@ -16,10 +16,11 @@ from starlette.middleware.cors import CORSMiddleware
 from azure.cosmos.exceptions import CosmosHttpResponseError
 
 import logging
-logging.basicConfig(
-    level=logging.DEBUG,  # Change to DEBUG for more details
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+
+# logging.basicConfig(
+#     level=logging.DEBUG,  # Change to DEBUG for more details
+#     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+# )
 
 # Add project root to path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -38,11 +39,11 @@ else:
     print(f"⚠️  .env file not found at: {env_file}, trying default locations")
     load_dotenv(override=False)
 
-# Verify critical environment variables
-mcp_token = os.getenv("MCP_AUTH_TOKEN")
-mcp_url = os.getenv("MCP_SERVER_BASE_URL", "http://localhost:8080")
-print(f"🔐 MCP_AUTH_TOKEN: {'SET (' + mcp_token[:8] + '...)' if mcp_token else 'NOT SET'}")
-print(f"🌐 MCP_SERVER_BASE_URL: {mcp_url}")
+# # Verify critical environment variables
+# mcp_token = os.getenv("MCP_AUTH_TOKEN")
+# mcp_url = os.getenv("MCP_SERVER_BASE_URL", "http://localhost:8080")
+# print(f"🔐 MCP_AUTH_TOKEN: {'SET (' + mcp_token[:8] + '...)' if mcp_token else 'NOT SET'}")
+# print(f"🌐 MCP_SERVER_BASE_URL: {mcp_url}")
 
 from src.app.services.azure_open_ai import model, generate_embedding
 from src.app.services.azure_cosmos_db import (
@@ -74,6 +75,7 @@ TRIP_TAG = "Trip Management"
 MEMORY_TAG = "Memory Management"
 PLACES_TAG = "Places Discovery"
 DEBUG_TAG = "Debug & Analytics"
+
 
 # ============================================================================
 # Pydantic Models
@@ -137,9 +139,9 @@ class Memory(BaseModel):
     memoryId: str
     userId: str
     tenantId: str
-    type: str  # "declarative" | "episodic" | "procedural"
+    memoryType: str  # "declarative" | "episodic" | "procedural"
     text: str
-    facets: Dict[str, Any]  # {"dietary": "vegetarian", "priceTier": 2}
+    facets: Dict[str, Any]  # {"category": "dining", "preference": "vegetarian"}
     salience: float
     justification: str
     extractedAt: str
@@ -276,12 +278,12 @@ agent_mapping = {
 async def initialize_agents():
     """Initialize agents with retry logic to handle MCP server startup timing"""
     global _agents_initialized, _graph, _checkpointer
-    
+
     logger.info("🚀 Starting agent initialization with retry logic...")
-    
+
     max_retries = 5
     retry_delay = 10  # seconds
-    
+
     for attempt in range(max_retries):
         try:
             logger.info(f"Attempt {attempt + 1}/{max_retries}: Initializing agents...")
@@ -311,7 +313,7 @@ async def shutdown_event():
 async def ensure_agents_initialized():
     """Ensure agents are initialized before handling requests"""
     global _agents_initialized
-    
+
     if not _agents_initialized:
         logger.info("🔄 Initializing agents on demand...")
         try:
@@ -324,7 +326,7 @@ async def ensure_agents_initialized():
         except Exception as e:
             logger.error(f"❌ Failed to initialize agents: {e}")
             raise HTTPException(
-                status_code=503, 
+                status_code=503,
                 detail="MCP service unavailable. Please try again in a few moments."
             )
 
@@ -451,7 +453,7 @@ def get_user_sessions(tenantId: str, userId: str):
     try:
         if not sessions_container:
             raise HTTPException(status_code=503, detail="Cosmos DB not available")
-        
+
         query = """
         SELECT * FROM c 
         WHERE c.tenantId = @tenantId 
@@ -821,7 +823,7 @@ def process_messages_background(messages: List[MessageModel], userId: str, tenan
     try:
         for message in messages:
             append_message(
-                thread_id=sessionId,
+                session_id=sessionId,
                 tenant_id=tenantId,
                 user_id=userId,
                 role="user" if message.senderRole == "User" else "assistant",
@@ -1312,6 +1314,24 @@ def filter_places(tenantId: str, filter_request: PlaceFilterRequest):
             query += f" AND c.priceTier IN ({placeholders})"
             for i, tier in enumerate(filter_request.priceTiers):
                 parameters.append({"name": f"@tier{i}", "value": tier})
+
+        # Add dietary options filter
+        if filter_request.dietary and len(filter_request.dietary) > 0:
+            # Use ARRAY_CONTAINS for each dietary option (AND logic - place must have ALL selected options)
+            dietary_conditions = []
+            for i, diet in enumerate(filter_request.dietary):
+                dietary_conditions.append(f"ARRAY_CONTAINS(c.dietary, @dietary{i})")
+                parameters.append({"name": f"@dietary{i}", "value": diet})
+            query += f" AND ({' AND '.join(dietary_conditions)})"
+
+        # Add accessibility features filter
+        if filter_request.accessibility and len(filter_request.accessibility) > 0:
+            # Use ARRAY_CONTAINS for each accessibility feature (AND logic - place must have ALL selected features)
+            accessibility_conditions = []
+            for i, feature in enumerate(filter_request.accessibility):
+                accessibility_conditions.append(f"ARRAY_CONTAINS(c.accessibility, @accessibility{i})")
+                parameters.append({"name": f"@accessibility{i}", "value": feature})
+            query += f" AND ({' AND '.join(accessibility_conditions)})"
         
         logger.info(f"Executing query: {query}")
         logger.info(f"Parameters: {parameters}")

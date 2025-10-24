@@ -1,12 +1,14 @@
 export interface Thread {
   id: string;
-  threadId: string;
+  sessionId: string;  // Changed from threadId to match backend
+  threadId?: string;  // Keep for backward compatibility
   tenantId: string;
   userId: string;
   title: string;
   activeAgent?: string;
   createdAt: string;
-  lastMessageAt: string;
+  lastMessageAt?: string;  // Made optional to match backend (lastActivityAt)
+  lastActivityAt?: string;  // Added to match backend
   messageCount?: number;
 }
 
@@ -23,7 +25,7 @@ export interface Message {
 export interface Place {
   id: string;
   geoScopeId: string;
-  type: 'hotel' | 'restaurant' | 'attraction';
+  type: 'hotel' | 'restaurant' | 'activity';
   name: string;
   description: string;
   neighborhood?: string;
@@ -40,7 +42,7 @@ export interface Place {
   hotelSpecific?: {
     amenities?: string[];
   };
-  attractionSpecific?: {
+  activitySpecific?: {
     ticketRequired?: boolean;
     duration?: string;
   };
@@ -82,12 +84,13 @@ export interface Memory {
   memoryId: string;
   tenantId: string;
   userId: string;
-  category: 'hotel' | 'dining' | 'activity' | 'trip';
-  key: string;
-  value: string;
-  facet: string;
   memoryType: 'declarative' | 'procedural' | 'episodic';
-  createdAt: string;
+  text: string;
+  facets: Record<string, any>;  // {"category": "dining", "preference": "vegetarian"}
+  salience: number;
+  justification: string;
+  extractedAt: string;
+  lastUsedAt: string;
   ttl?: number;
 }
 

@@ -83,7 +83,7 @@ export class TravelApiService {
 
   createThread(): Observable<Thread> {
     return this.http.post<Thread>(
-      `${this.baseUrl}/tenant/${this.tenantId}/user/${this.userId}/sessions`,
+      `${this.baseUrl}/tenant/${this.tenantId}/user/${this.userId}/sessions?activeAgent=Orchestrator`,
       {},
       { headers: this.getHeaders() }
     ).pipe(
@@ -127,9 +127,10 @@ export class TravelApiService {
       { headers: this.getHeaders() }
     ).pipe(
       tap(() => {
-        const threads = this.threadsSubject.value.filter(t => t.threadId !== threadId);
+        const threads = this.threadsSubject.value.filter(t => (t.sessionId || t.threadId) !== threadId);
         this.threadsSubject.next(threads);
-        if (this.currentThreadSubject.value?.threadId === threadId) {
+        const currentId = this.currentThreadSubject.value?.sessionId || this.currentThreadSubject.value?.threadId;
+        if (currentId === threadId) {
           this.currentThreadSubject.next(null);
           this.messagesSubject.next([]);
         }
@@ -140,7 +141,10 @@ export class TravelApiService {
   setCurrentThread(thread: Thread): void {
     this.currentThreadSubject.next(thread);
     if (thread) {
-      this.getThreadMessages(thread.threadId).subscribe();
+      const threadId = thread.sessionId || thread.threadId;
+      if (threadId) {
+        this.getThreadMessages(threadId).subscribe();
+      }
     } else {
       this.messagesSubject.next([]);
     }
@@ -150,14 +154,21 @@ export class TravelApiService {
   // Chat Completion
   // ============================================================================
 
-  sendMessage(threadId: string, message: string): Observable<ChatCompletionResponse> {
-    return this.http.post<ChatCompletionResponse>(
+  sendMessage(threadId: string, message: string): Observable<any> {
+    return this.http.post<any>(
       `${this.baseUrl}/tenant/${this.tenantId}/user/${this.userId}/sessions/${threadId}/completion`,
       JSON.stringify(message),
       { headers: this.getHeaders() }
     ).pipe(
       tap(response => {
-        if (response.messages) {
+        // Backend returns array of messages directly
+        if (Array.isArray(response)) {
+          const messages: Message[] = response.map((msg: any) => ({
+            role: (msg.senderRole === 'User' ? 'user' : 'assistant') as 'user' | 'assistant' | 'system',
+            content: msg.text || ''
+          }));
+          this.messagesSubject.next(messages);
+        } else if (response.messages) {
           this.messagesSubject.next(response.messages);
         }
       })
@@ -222,9 +233,10 @@ export class TravelApiService {
   // ============================================================================
 
   getMemories(): Observable<Memory[]> {
-    return this.http.get<Memory[]>(
-      `${this.baseUrl}/tenant/${this.tenantId}/user/${this.userId}/memories`,
-      { headers: this.getHeaders() }
+    const url = `${this.baseUrl}/tenant/${this.tenantId}/user/${this.userId}/memories`;
+    console.log('🔍 Fetching memories from:', url);
+    return this.http.get<Memory[]>(url, { headers: this.getHeaders() }).pipe(
+      tap(memories => console.log('✅ Memories response:', memories))
     );
   }
 
@@ -335,8 +347,11 @@ export class TravelApiService {
   // ============================================================================
 
   filterPlaces(request: PlaceFilterRequest): Observable<Place[]> {
+    const tenant = this.tenantId;
+    console.log('🏢 Using tenant for filterPlaces:', tenant);
+    console.log('🔍 Filter request being sent:', request);
     return this.http.post<Place[]>(
-      `${this.baseUrl}/tenant/${this.tenantId}/places/filter`,
+      `${this.baseUrl}/tenant/${tenant}/places/filter`,
       request,
       { headers: this.getHeaders() }
     );

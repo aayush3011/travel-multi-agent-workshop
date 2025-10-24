@@ -20,12 +20,6 @@ export class ProfileComponent implements OnInit {
     timeOfDay: 'any'
   };
 
-  pastHighlights = [
-    { destination: 'Kyoto', experience: 'Morning markets', date: 'May 2024' },
-    { destination: 'Barcelona', experience: 'Late-night cafés', date: 'Aug 2025' },
-    { destination: 'Tokyo', experience: 'Street photography', date: 'Dec 2024' }
-  ];
-
   constructor(private travelApi: TravelApiService) {}
 
   ngOnInit(): void {
@@ -35,6 +29,8 @@ export class ProfileComponent implements OnInit {
   loadMemories(): void {
     this.travelApi.getMemories().subscribe({
       next: (memories) => {
+        console.log('📝 Memories received:', memories);
+        console.log('📝 Number of memories:', memories?.length);
         this.memories = memories;
       },
       error: (error) => {
@@ -49,7 +45,7 @@ export class ProfileComponent implements OnInit {
   }
 
   deleteMemory(memory: Memory): void {
-    if (confirm(`Delete memory: ${memory.key}?`)) {
+    if (confirm(`Delete memory: ${memory.text}?`)) {
       this.travelApi.deleteMemory(memory.memoryId).subscribe({
         next: () => {
           this.memories = this.memories.filter(m => m.memoryId !== memory.memoryId);

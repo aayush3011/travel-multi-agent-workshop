@@ -47,7 +47,7 @@ export class LoginComponent implements OnInit {
 
   loadUsers(): void {
     this.isLoading = true;
-    this.travelApiService.getUsers('default').subscribe({
+    this.travelApiService.getUsers().subscribe({
       next: (users) => {
         this.users = users;
         this.isLoading = false;

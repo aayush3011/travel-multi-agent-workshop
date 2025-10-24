@@ -24,6 +24,7 @@ export class ExploreComponent implements OnInit, OnDestroy {
   
   // Trip Planning Fields (from Home component)
   selectedCity = '';
+  currentCityName = ''; // Store the actual city name (not display name) for filtering
   startDate = '';
   endDate = '';
   travelers = {
@@ -42,12 +43,12 @@ export class ExploreComponent implements OnInit, OnDestroy {
   showDatePicker = false;
   showTravelersPicker = false;
   
-  // Filters
+  // Filters - Updated to support multi-select
   filters = {
     theme: '',
-    budget: 'any',
-    dietary: 'any',
-    accessibility: 'any',
+    budget: [] as string[],        // Changed to array for multi-select
+    dietary: [] as string[],        // Changed to array for multi-select
+    accessibility: [] as string[],  // Changed to array for multi-select
     placeType: 'all'
   };
 
@@ -81,7 +82,13 @@ export class ExploreComponent implements OnInit, OnDestroy {
     this.subscriptions.add(
       this.travelApi.selectedCity$.subscribe(city => {
         if (city) {
-          this.selectedCity = city;
+          // Find the city object to get the display name
+          const cityObj = this.cities.find(c => c.name === city);
+          if (cityObj) {
+            this.selectedCity = cityObj.displayName; // Use display name instead of snake_case
+          } else {
+            this.selectedCity = this.formatCityName(city); // Fallback to formatting
+          }
           this.loadPlacesForCity(city);
         }
       })
@@ -140,13 +147,37 @@ export class ExploreComponent implements OnInit, OnDestroy {
     // Optimistically add user message to UI
     this.messages = [...this.messages, { role: 'user', content: userMessage }];
 
-    this.travelApi.sendMessage(this.currentThread.threadId, userMessage).subscribe({
+    // Use sessionId (fallback to threadId for backward compatibility)
+    const threadId = this.currentThread.sessionId || this.currentThread.threadId || '';
+    
+    if (!threadId) {
+      console.error('No thread ID available');
+      this.isLoading = false;
+      return;
+    }
+    
+    console.log('📤 Sending message to thread:', threadId);
+    
+    this.travelApi.sendMessage(threadId, userMessage).subscribe({
       next: (response) => {
-        this.messages = response.messages;
+        console.log('📥 Received response:', response);
+        
+        // Backend returns messages array directly (not wrapped in object)
+        if (Array.isArray(response)) {
+          this.messages = response.map(msg => ({
+            role: msg.senderRole === 'User' ? 'user' : 'assistant',
+            content: msg.text || msg.content || '',
+            timestamp: msg.timeStamp
+          }));
+        } else if (response.messages && Array.isArray(response.messages)) {
+          this.messages = response.messages;
+        } else {
+          console.warn('Unexpected response format:', response);
+        }
         this.isLoading = false;
       },
       error: (error) => {
-        console.error('Error sending message:', error);
+        console.error('❌ Error sending message:', error);
         this.isLoading = false;
         alert('Failed to send message. Please check your backend connection.');
       }
@@ -169,29 +200,32 @@ export class ExploreComponent implements OnInit, OnDestroy {
   }
 
   applyFilters(): void {
-    console.log('Applying filters:', this.filters);
-    
-    // Get the current selected city
-    const city = this.cities.find(c => c.displayName === this.selectedCity);
-    
-    if (!city) {
-      console.log('No city selected, cannot apply filters');
+    // Check if we have a current city loaded
+    if (!this.currentCityName) {
+      console.log('No city loaded yet, cannot apply filters');
       return;
     }
 
     this.isLoading = true;
     
     const filterRequest: any = {
-      city: city.name,
+      city: this.currentCityName,
       types: this.filters.placeType !== 'all' ? [this.filters.placeType] : undefined,
-      priceTiers: this.filters.budget !== 'any' ? [this.filters.budget] : undefined
+      priceTiers: this.filters.budget.length > 0 ? this.filters.budget : undefined,
+      dietary: this.filters.dietary.length > 0 ? this.filters.dietary : undefined,
+      accessibility: this.filters.accessibility.length > 0 ? this.filters.accessibility : undefined
     };
+
+    console.log('🔍 Filter request:', filterRequest);
+    console.log('🔍 filters.placeType:', this.filters.placeType);
+    console.log('🔍 Sending types array:', filterRequest.types);
 
     this.travelApi.filterPlaces(filterRequest).subscribe({
       next: (places) => {
         this.places = places;
         this.isLoading = false;
         console.log(`✅ Applied filters, got ${places.length} places`);
+        console.log('📍 First few places:', places.slice(0, 3).map(p => ({name: p.name, type: p.type})));
       },
       error: (error) => {
         console.error('Error applying filters:', error);
@@ -203,12 +237,43 @@ export class ExploreComponent implements OnInit, OnDestroy {
   resetFilters(): void {
     this.filters = {
       theme: '',
-      budget: 'any',
-      dietary: 'any',
-      accessibility: 'any',
+      budget: [],
+      dietary: [],
+      accessibility: [],
       placeType: 'all'
     };
     // Re-apply filters with reset values
+    this.applyFilters();
+  }
+
+  // Multi-select filter toggle methods
+  toggleBudgetFilter(tier: string): void {
+    const index = this.filters.budget.indexOf(tier);
+    if (index > -1) {
+      this.filters.budget.splice(index, 1);
+    } else {
+      this.filters.budget.push(tier);
+    }
+    this.applyFilters();
+  }
+
+  toggleDietaryFilter(option: string): void {
+    const index = this.filters.dietary.indexOf(option);
+    if (index > -1) {
+      this.filters.dietary.splice(index, 1);
+    } else {
+      this.filters.dietary.push(option);
+    }
+    this.applyFilters();
+  }
+
+  toggleAccessibilityFilter(option: string): void {
+    const index = this.filters.accessibility.indexOf(option);
+    if (index > -1) {
+      this.filters.accessibility.splice(index, 1);
+    } else {
+      this.filters.accessibility.push(option);
+    }
     this.applyFilters();
   }
 
@@ -285,8 +350,19 @@ export class ExploreComponent implements OnInit, OnDestroy {
 
   private formatDate(dateString: string): string {
     if (!dateString) return '';
-    const date = new Date(dateString);
+    // Parse as UTC to avoid timezone shifting
+    const [year, month, day] = dateString.split('-').map(Number);
+    const date = new Date(year, month - 1, day); // month is 0-indexed
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  }
+
+  // Format city name for display (abu_dhabi -> Abu Dhabi)
+  formatCityName(cityName: string): string {
+    if (!cityName) return '';
+    return cityName
+      .split('_')
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(' ');
   }
 
   // Travelers Picker Methods
@@ -371,6 +447,7 @@ export class ExploreComponent implements OnInit, OnDestroy {
 
     if (city) {
       console.log('Loading places for city:', city.name);
+      this.currentCityName = city.name; // Store the city name for filtering
       this.loadPlacesForCity(city.name);
       this.travelApi.setSelectedCity(city.name);
     } else {
@@ -387,7 +464,9 @@ export class ExploreComponent implements OnInit, OnDestroy {
     const filterRequest: any = {
       city: cityName,
       types: this.filters.placeType !== 'all' ? [this.filters.placeType] : undefined,
-      priceTiers: this.filters.budget !== 'any' ? [this.filters.budget] : undefined
+      priceTiers: this.filters.budget.length > 0 ? this.filters.budget : undefined,
+      dietary: this.filters.dietary.length > 0 ? this.filters.dietary : undefined,
+      accessibility: this.filters.accessibility.length > 0 ? this.filters.accessibility : undefined
     };
 
     this.travelApi.filterPlaces(filterRequest).subscribe({
