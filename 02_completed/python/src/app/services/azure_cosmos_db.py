@@ -511,14 +511,16 @@ def query_places(
     place_type: Optional[str] = None,
     tags: Optional[List[str]] = None,
     dietary: Optional[List[str]] = None,
+    accessibility: Optional[List[str]] = None,
     price_tier: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
-    """Query places with filters"""
+    """Query places with filters including array-based filters (dietary, accessibility, tags)"""
     logger.info(f"🔍 ========== QUERY_PLACES CALLED ==========")
     logger.info(f"🔍 Parameters:")
     logger.info(f"     - geo_scope_id: {geo_scope_id}")
     logger.info(f"     - place_type: {place_type}")
     logger.info(f"     - dietary: {dietary}")
+    logger.info(f"     - accessibility: {accessibility}")
     logger.info(f"     - price_tier: {price_tier}")
     logger.info(f"     - tags: {tags}")
     logger.info(f"     - vectors dimension: {len(vectors) if vectors else 'None'}")
@@ -541,7 +543,30 @@ def query_places(
         filters.append("c.priceTier = @priceTier")
         params.append({"name": "@priceTier", "value": price_tier})
     
-    # Note: Complex array filters would require additional logic
+    # Add dietary filter using ARRAY_CONTAINS (AND logic - must have ALL selected options)
+    if dietary and len(dietary) > 0:
+        dietary_conditions = []
+        for i, diet in enumerate(dietary):
+            dietary_conditions.append(f"ARRAY_CONTAINS(c.dietary, @dietary{i})")
+            params.append({"name": f"@dietary{i}", "value": diet})
+        filters.append(f"({' AND '.join(dietary_conditions)})")
+    
+    # Add accessibility filter using ARRAY_CONTAINS (AND logic - must have ALL selected features)
+    if accessibility and len(accessibility) > 0:
+        accessibility_conditions = []
+        for i, feature in enumerate(accessibility):
+            accessibility_conditions.append(f"ARRAY_CONTAINS(c.accessibility, @accessibility{i})")
+            params.append({"name": f"@accessibility{i}", "value": feature})
+        filters.append(f"({' AND '.join(accessibility_conditions)})")
+    
+    # Add tags filter using ARRAY_CONTAINS (AND logic - must have ALL selected tags)
+    if tags and len(tags) > 0:
+        tags_conditions = []
+        for i, tag in enumerate(tags):
+            tags_conditions.append(f"ARRAY_CONTAINS(c.tags, @tag{i})")
+            params.append({"name": f"@tag{i}", "value": tag})
+        filters.append(f"({' AND '.join(tags_conditions)})")
+    
     where_clause = " AND ".join(filters)
     
     query = f"""

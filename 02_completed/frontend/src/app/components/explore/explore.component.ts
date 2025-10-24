@@ -208,6 +208,55 @@ export class ExploreComponent implements OnInit, OnDestroy {
 
     this.isLoading = true;
     
+    // If theme is provided, use vector search via /places/search
+    if (this.filters.theme && this.filters.theme.trim()) {
+      console.log('🎨 Using theme-based vector search:', this.filters.theme);
+      
+      const currentUser = this.travelApi.getCurrentUser();
+      const searchRequest: any = {
+        geoScope: this.currentCityName,
+        query: this.filters.theme.trim(),
+        userId: currentUser?.userId || 'guest',
+        tenantId: this.travelApi.getTenantId(),
+        filters: {
+          type: this.filters.placeType !== 'all' ? this.filters.placeType : undefined,
+          dietary: this.filters.dietary.length > 0 ? this.filters.dietary : undefined,
+          accessibility: this.filters.accessibility.length > 0 ? this.filters.accessibility : undefined
+        }
+      };
+
+      // Add priceTier filter (only single value supported by backend)
+      if (this.filters.budget.length === 1) {
+        searchRequest.filters.priceTier = this.filters.budget[0];
+      }
+
+      console.log('🔍 Search request:', searchRequest);
+
+      this.travelApi.searchPlaces(searchRequest).subscribe({
+        next: (places) => {
+          let filteredPlaces = places;
+          
+          // Apply client-side filter for multiple price tiers (since vector search only supports one priceTier)
+          if (this.filters.budget.length > 1) {
+            filteredPlaces = filteredPlaces.filter(place => 
+              place.priceTier && this.filters.budget.includes(place.priceTier)
+            );
+          }
+
+          this.places = filteredPlaces;
+          this.isLoading = false;
+          console.log(`✅ Theme search completed, got ${filteredPlaces.length} places`);
+        },
+        error: (error) => {
+          console.error('Error in theme search:', error);
+          this.isLoading = false;
+        }
+      });
+      
+      return;
+    }
+
+    // Original filter logic (no theme) - use /places/filter endpoint
     const filterRequest: any = {
       city: this.currentCityName,
       types: this.filters.placeType !== 'all' ? [this.filters.placeType] : undefined,
