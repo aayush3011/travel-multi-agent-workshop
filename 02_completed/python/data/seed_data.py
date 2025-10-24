@@ -34,6 +34,7 @@ from pathlib import Path
 
 from azure.cosmos import CosmosClient, PartitionKey
 from azure.cosmos.exceptions import CosmosResourceExistsError, CosmosResourceNotFoundError
+from azure.identity import DefaultAzureCredential
 from openai import AzureOpenAI
 from dotenv import load_dotenv
 
@@ -47,6 +48,10 @@ load_dotenv()
 COSMOS_ENDPOINT = os.getenv("COSMOSDB_ENDPOINT")
 COSMOS_KEY = os.getenv("COSMOS_KEY")
 DATABASE_NAME = os.getenv("COSMOS_DB_DATABASE_NAME", "TravelAssistant")
+
+# Azure OpenAI configuration
+AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
+AZURE_OPENAI_EMBEDDING_DEPLOYMENT = os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT")
 
 # Vector search configuration
 VECTOR_DIMENSIONS = 1024
@@ -67,12 +72,44 @@ print(f"📊 Embedding model: {AZURE_OPENAI_EMBEDDING_DEPLOYMENT}")
 
 
 # ============================================================================
+# Azure OpenAI Client Initialization
+# ============================================================================
+
+def get_openai_client() -> AzureOpenAI:
+    """Initialize Azure OpenAI client with Azure AD authentication"""
+    credential = DefaultAzureCredential()
+    
+    def token_provider():
+        return credential.get_token("https://cognitiveservices.azure.com/.default").token
+    
+    return AzureOpenAI(
+        azure_endpoint=AZURE_OPENAI_ENDPOINT,
+        azure_ad_token_provider=token_provider,
+        api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
+    )
+
+def generate_embedding(text: str) -> List[float]:
+    """Generate embedding for given text using Azure OpenAI"""
+    try:
+        client = get_openai_client()
+        response = client.embeddings.create(
+            input=text,
+            model=AZURE_OPENAI_EMBEDDING_DEPLOYMENT
+        )
+        return response.data[0].embedding
+    except Exception as e:
+        print(f"⚠️ Warning: Could not generate embedding for text: {e}")
+        # Return a dummy embedding of the correct dimension if embedding fails
+        return [0.0] * VECTOR_DIMENSIONS
+
+# ============================================================================
 # Cosmos DB Client Initialization
 # ============================================================================
 
 def get_cosmos_client() -> CosmosClient:
-    """Initialize Cosmos DB client"""
-    return CosmosClient(COSMOS_ENDPOINT, COSMOS_KEY)
+    """Initialize Cosmos DB client with Azure AD authentication"""
+    credential = DefaultAzureCredential()
+    return CosmosClient(COSMOS_ENDPOINT, credential)
 
 # ============================================================================
 # Container Definitions with Vector + Full-Text Indexing
@@ -250,7 +287,7 @@ def create_container_with_indexing(
 
     # Create container
     try:
-        container = database.create_container_if_not_exists(
+        container = database.create_container(
             id=container_name,
             partition_key=partition_key,
             indexing_policy=indexing_policy,
@@ -277,11 +314,13 @@ def create_database_and_containers(client: CosmosClient) -> tuple:
 
     # Create database
     try:
-        database = client.create_database_if_not_exists(id=DATABASE_NAME)
-        print(f"✅ Created database: {DATABASE_NAME}")
-    except CosmosResourceExistsError:
-        print(f"⚠️  Database already exists: {DATABASE_NAME}")
+        # Try to get existing database first
         database = client.get_database_client(DATABASE_NAME)
+        print(f"✅ Using existing database: {DATABASE_NAME}")
+    except CosmosResourceNotFoundError:
+        # Only create if it doesn't exist
+        database = client.create_database(id=DATABASE_NAME)
+        print(f"✅ Created database: {DATABASE_NAME}")
 
     # Create all containers
     print("\n" + "=" * 70)
@@ -359,9 +398,20 @@ def seed_memories(container, dry_run: bool = False):
 
     for idx, memory in enumerate(memories, 1):
         try:
+            # Generate embedding if not present or empty
+            if not memory.get("embedding") or memory["embedding"] == []:
+                print(f"   🔄 Generating embedding for memory {idx}/{len(memories)}...")
+                memory["embedding"] = generate_embedding(memory["text"])
+
+            # Handle TTL: -1 means no expiration (remove ttl field), otherwise keep the value
+            if memory.get("ttl") == -1:
+                # Remove ttl field for permanent memories (declarative, procedural)
+                memory.pop("ttl", None)
+            # If ttl is a positive number (e.g., 7776000 for 90 days), keep it as is
+
             container.upsert_item(memory)
-            memory_type = memory.get('memoryType', 'unknown')
-            ttl_info = "no expiration" if memory.get("ttl") == -1 else f"TTL={memory.get('ttl')}s"
+            memory_type = memory.get('memory_type', 'unknown')
+            ttl_info = "no expiration" if memory.get("ttl") is None else f"TTL={memory.get('ttl')}s"
             print(f"   ✅ Seeded memory: {memory['memoryId']} ({memory_type}, {ttl_info})")
         except Exception as e:
             print(f"   ❌ Error seeding memory {memory.get('memoryId')}: {e}")
@@ -410,12 +460,21 @@ def seed_places(container, dry_run: bool = False):
     for place_type, count in sorted(type_counts.items()):
         print(f"      • {place_type}: {count}")
     
+    print(f"\n   🔄 Generating embeddings for {len(all_places)} places...")
+    print("      (This may take several minutes)")
+    print("      💡 Tip: Embeddings are generated from place descriptions")
+    
     # Seed all places with progress tracking
     success_count = 0
     error_count = 0
     
     for idx, place in enumerate(all_places, 1):
         try:
+            # Generate embedding if not present or empty
+            if not place.get("embedding") or place["embedding"] == []:
+                # Generate embedding from description
+                place["embedding"] = generate_embedding(place["description"])
+            
             container.upsert_item(place)
             success_count += 1
             

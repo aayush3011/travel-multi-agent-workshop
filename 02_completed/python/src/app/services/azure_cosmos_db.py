@@ -44,8 +44,7 @@ def initialize_cosmos_client():
     if cosmos_client is None:
         try:
             credential = DefaultAzureCredential()
-            # cosmos_client = CosmosClient(COSMOS_DB_URL, credential=credential)
-            cosmos_client = CosmosClient(COSMOS_DB_URL, COSMOS_DB_KEY)
+            cosmos_client = CosmosClient(COSMOS_DB_URL, credential=credential)
             logger.info(f"✅ Connected to Cosmos DB successfully using DefaultAzureCredential.")
         except Exception as dac_error:
             logger.error(f"❌ Failed to authenticate using DefaultAzureCredential: {dac_error}")
@@ -103,7 +102,6 @@ def get_checkpoint_saver():
         try:
             logger.info("Using CosmosDBSaver for checkpoint persistence")
             return CosmosDBSaver(
-                cosmos_client=cosmos_client,
                 database_name=DATABASE_NAME,
                 container_name=checkpoint_container
             )

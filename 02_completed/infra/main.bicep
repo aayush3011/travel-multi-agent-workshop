@@ -77,11 +77,11 @@ module openAi './shared/openai.bicep' = {
 //Deploy OpenAI Deployments
 var deployments = [
   {
-    name: 'gpt-4.1-mini'
+    name: 'gpt-4o-mini'
     skuCapacity: 30
 	skuName: 'GlobalStandard'
-    modelName: 'gpt-4.1-mini'
-    modelVersion: '2025-04-14'
+    modelName: 'gpt-4o-mini'
+    modelVersion: '2024-07-18'
   }
   {
     name: 'text-embedding-3-small'
