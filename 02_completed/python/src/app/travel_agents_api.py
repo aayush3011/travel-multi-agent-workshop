@@ -1234,21 +1234,21 @@ def delete_memory(tenantId: str, userId: str, memoryId: str):
     "/places/search",
     tags=[PLACES_TAG],
     summary="Search Places",
-    description="Direct place search (bypassing agents) - useful for UI autocomplete or map views",
+    description="Vector search with optional filters (type, price, dietary, accessibility, tags) - useful for theme-based searches",
     response_model=List[Place]
 )
 def search_places(search_request: PlaceSearchRequest):
     """
-    Search for hotels, restaurants, or attractions.
+    Search for hotels, restaurants, or attractions using vector similarity.
     
-    This endpoint bypasses the agent system and directly searches the places database.
-    Useful for UI features like autocomplete, map views, or quick searches.
+    This endpoint uses semantic search with optional filters for type, price tier,
+    dietary options, accessibility features, and tags.
     
     Args:
-        search_request: PlaceSearchRequest with search parameters
+        search_request: PlaceSearchRequest with search parameters and optional filters
     
     Returns:
-        List of Place objects matching the search criteria
+        List of Place objects matching the search criteria (top 5 by vector similarity)
     """
     try:
         # Generate embedding for query
@@ -1257,13 +1257,21 @@ def search_places(search_request: PlaceSearchRequest):
         # Extract filters
         place_type = search_request.filters.get("type") if search_request.filters else None
         price_tier = search_request.filters.get("priceTier") if search_request.filters else None
+        dietary = search_request.filters.get("dietary") if search_request.filters else None
+        accessibility = search_request.filters.get("accessibility") if search_request.filters else None
+        tags = search_request.filters.get("tags") if search_request.filters else None
         
-        # Query places
+        logger.info(f"🔍 search_places called with filters: type={place_type}, priceTier={price_tier}, dietary={dietary}, accessibility={accessibility}, tags={tags}")
+        
+        # Query places with all filters
         places = query_places(
             vectors=vectors,
             geo_scope_id=search_request.geoScope.lower(),
             place_type=place_type,
-            price_tier=price_tier
+            price_tier=price_tier,
+            dietary=dietary,
+            accessibility=accessibility,
+            tags=tags
         )
         
         return [Place(**place) for place in places]

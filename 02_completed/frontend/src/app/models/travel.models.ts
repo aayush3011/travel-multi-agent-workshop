@@ -102,13 +102,15 @@ export interface ChatCompletionResponse {
 
 export interface PlaceSearchRequest {
   geoScope: string;
-  placeTypes: string[];
-  searchEmbedding: string;
-  topK?: number;
+  query: string;
+  userId: string;
+  tenantId?: string;
   filters?: {
     type?: string;
-    dietary?: string;
     priceTier?: string;
+    dietary?: string[];
+    accessibility?: string[];
+    tags?: string[];
   };
 }
 
@@ -143,5 +145,6 @@ export interface PlaceFilterRequest {
   priceTiers?: string[];
   dietary?: string[];
   accessibility?: string[];
+  theme?: string;
 }
 

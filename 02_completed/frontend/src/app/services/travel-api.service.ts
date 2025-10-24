@@ -57,6 +57,11 @@ export class TravelApiService {
     return this.currentUserSubject.value?.tenantId || this.defaultTenantId;
   }
 
+  // Public method to get tenantId
+  getTenantId(): string {
+    return this.tenantId;
+  }
+
   private get userId(): string {
     return this.currentUserSubject.value?.userId || this.defaultUserId;
   }
@@ -180,8 +185,9 @@ export class TravelApiService {
   // ============================================================================
 
   searchPlaces(request: PlaceSearchRequest): Observable<Place[]> {
+    console.log('🔍 Place search request:', request);
     return this.http.post<Place[]>(
-      `${this.baseUrl}/tenant/${this.tenantId}/user/${this.userId}/places/search`,
+      `${this.baseUrl}/places/search`,
       request,
       { headers: this.getHeaders() }
     );
