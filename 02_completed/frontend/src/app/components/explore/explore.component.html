@@ -1,0 +1,509 @@
+<div class="relative">
+  <!-- Trip Planning Bar (Always Visible) -->
+  <div class="border-b bg-white/80 backdrop-blur sticky top-16 z-30 trip-planning-bar">
+    <div class="max-w-7xl mx-auto px-4 py-4">
+      <div class="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
+        <!-- City Dropdown -->
+        <div class="relative">
+          <div 
+            class="px-3 py-2 rounded-xl border border-cosmos-primary text-left bg-white cursor-text"
+          >
+            <div class="text-[11px] uppercase tracking-wide text-gray-500">City/Region</div>
+            <input
+              type="text"
+              [(ngModel)]="selectedCity"
+              (input)="onCityInputChange()"
+              (focus)="onCityFocus()"
+              (blur)="onCityBlur()"
+              placeholder="Where to?"
+              class="w-full font-medium text-slate-800 outline-none text-sm bg-transparent"
+            />
+          </div>
+          
+          <!-- City Autocomplete Dropdown -->
+          <div 
+            *ngIf="showCityDropdown && filteredCities.length > 0"
+            class="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg max-h-60 overflow-y-auto z-50"
+          >
+            <div 
+              *ngFor="let city of filteredCities"
+              (click)="selectCity(city)"
+              class="px-4 py-2 hover:bg-blue-50 cursor-pointer text-sm"
+            >
+              <div class="font-medium">{{ city.displayName }}</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Dates Dropdown -->
+        <div class="relative">
+          <div 
+            (click)="toggleDatePicker()"
+            class="px-3 py-2 rounded-xl border border-cosmos-primary text-left bg-white cursor-pointer"
+          >
+            <div class="text-[11px] uppercase tracking-wide text-gray-500">Dates</div>
+            <div class="font-medium text-slate-800 text-sm">
+              {{ getDateRangeDisplay() }}
+            </div>
+          </div>
+          
+          <!-- Date Picker Dropdown -->
+          <div 
+            *ngIf="showDatePicker"
+            class="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg p-4 z-50 min-w-[280px]"
+          >
+            <div class="space-y-3">
+              <div>
+                <label class="text-xs text-gray-500 uppercase tracking-wide">Start Date</label>
+                <input
+                  type="date"
+                  [(ngModel)]="startDate"
+                  class="w-full mt-1 px-3 py-2 rounded-lg border outline-none text-sm"
+                />
+              </div>
+              <div>
+                <label class="text-xs text-gray-500 uppercase tracking-wide">End Date</label>
+                <input
+                  type="date"
+                  [(ngModel)]="endDate"
+                  [min]="startDate"
+                  class="w-full mt-1 px-3 py-2 rounded-lg border outline-none text-sm"
+                />
+              </div>
+              <button 
+                (click)="closeDatePicker()"
+                class="w-full px-3 py-2 rounded-lg bg-cosmos-primary text-white text-sm hover:bg-blue-600"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Travelers Dropdown -->
+        <div class="relative">
+          <div 
+            (click)="toggleTravelersPicker()"
+            class="px-3 py-2 rounded-xl border border-cosmos-primary text-left bg-white cursor-pointer"
+          >
+            <div class="text-[11px] uppercase tracking-wide text-gray-500">Travelers</div>
+            <div class="font-medium text-slate-800 text-sm">
+              {{ getTravelersDisplay() }}
+            </div>
+          </div>
+          
+          <!-- Travelers Picker Dropdown -->
+          <div 
+            *ngIf="showTravelersPicker"
+            class="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg p-4 z-50 min-w-[240px]"
+          >
+            <div class="space-y-4">
+              <!-- Adults -->
+              <div class="flex items-center justify-between">
+                <div class="text-sm">
+                  <div class="font-medium">Adults</div>
+                  <div class="text-xs text-gray-500">Ages 13+</div>
+                </div>
+                <div class="flex items-center gap-3">
+                  <button 
+                    (click)="decrementAdults()"
+                    [disabled]="travelers.adults <= 1"
+                    class="w-8 h-8 rounded-full border border-gray-300 flex items-center justify-center hover:border-cosmos-primary disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    <span class="text-lg leading-none">−</span>
+                  </button>
+                  <span class="w-8 text-center font-medium">{{ travelers.adults }}</span>
+                  <button 
+                    (click)="incrementAdults()"
+                    [disabled]="travelers.adults >= 10"
+                    class="w-8 h-8 rounded-full border border-gray-300 flex items-center justify-center hover:border-cosmos-primary disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    <span class="text-lg leading-none">+</span>
+                  </button>
+                </div>
+              </div>
+              
+              <!-- Children -->
+              <div class="flex items-center justify-between">
+                <div class="text-sm">
+                  <div class="font-medium">Children</div>
+                  <div class="text-xs text-gray-500">Ages 2-12</div>
+                </div>
+                <div class="flex items-center gap-3">
+                  <button 
+                    (click)="decrementChildren()"
+                    [disabled]="travelers.children <= 0"
+                    class="w-8 h-8 rounded-full border border-gray-300 flex items-center justify-center hover:border-cosmos-primary disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    <span class="text-lg leading-none">−</span>
+                  </button>
+                  <span class="w-8 text-center font-medium">{{ travelers.children }}</span>
+                  <button 
+                    (click)="incrementChildren()"
+                    [disabled]="travelers.children >= 10"
+                    class="w-8 h-8 rounded-full border border-gray-300 flex items-center justify-center hover:border-cosmos-primary disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    <span class="text-lg leading-none">+</span>
+                  </button>
+                </div>
+              </div>
+              
+              <!-- Pets -->
+              <div class="flex items-center justify-between">
+                <div class="text-sm">
+                  <div class="font-medium">Pets</div>
+                  <div class="text-xs text-gray-500">Service animals</div>
+                </div>
+                <div class="flex items-center gap-3">
+                  <button 
+                    (click)="decrementPets()"
+                    [disabled]="travelers.pets <= 0"
+                    class="w-8 h-8 rounded-full border border-gray-300 flex items-center justify-center hover:border-cosmos-primary disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    <span class="text-lg leading-none">−</span>
+                  </button>
+                  <span class="w-8 text-center font-medium">{{ travelers.pets }}</span>
+                  <button 
+                    (click)="incrementPets()"
+                    [disabled]="travelers.pets >= 5"
+                    class="w-8 h-8 rounded-full border border-gray-300 flex items-center justify-center hover:border-cosmos-primary disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    <span class="text-lg leading-none">+</span>
+                  </button>
+                </div>
+              </div>
+              
+              <button 
+                (click)="closeTravelersPicker()"
+                class="w-full px-3 py-2 rounded-lg bg-cosmos-primary text-white text-sm hover:bg-blue-600"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Start a Trip Button -->
+        <div>
+          <button 
+            (click)="startTrip()"
+            class="w-full px-5 py-3 rounded-xl bg-cosmos-primary text-white hover:bg-blue-600 transition shadow-md hover:shadow-lg font-medium"
+          >
+            Start a trip
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main Content Grid -->
+  <div class="max-w-7xl mx-auto px-4 py-8 grid grid-cols-1 md:grid-cols-[260px_1fr] gap-6">
+    
+    <!-- Sidebar: Filters -->
+    <div class="space-y-4">
+      <div class="mb-4">
+        <h2 class="text-xl font-semibold tracking-tight">Filters</h2>
+        <p class="text-sm text-gray-500">Tune the vibe</p>
+      </div>
+      
+      <div class="grid gap-3">
+        <!-- Place Type -->
+        <label class="text-sm font-medium">Place Type</label>
+        <select 
+          [(ngModel)]="filters.placeType"
+          (change)="applyFilters()"
+          class="px-3 py-2 rounded-xl border focus:ring-2 focus:ring-cosmos-primary focus:border-transparent"
+        >
+          <option value="all">All Places</option>
+          <option value="hotel">Hotels</option>
+          <option value="restaurant">Restaurants</option>
+          <option value="activity">Activities</option>
+        </select>
+        
+        <!-- Theme -->
+        <label class="text-sm font-medium mt-2">Theme</label>
+        <input 
+          [(ngModel)]="filters.theme"
+          (input)="applyFilters()"
+          class="px-3 py-2 rounded-xl border focus:ring-2 focus:ring-cosmos-primary focus:border-transparent" 
+          placeholder="e.g., street photography"
+        />
+        
+        <!-- Budget -->
+        <label class="text-sm font-medium mt-2">Budget</label>
+        <div class="space-y-2">
+          <label class="flex items-center cursor-pointer">
+            <input 
+              type="checkbox" 
+              [checked]="filters.budget.includes('budget')"
+              (change)="toggleBudgetFilter('budget')"
+              class="mr-2 rounded"
+            />
+            <span class="text-sm">Budget ($)</span>
+          </label>
+          <label class="flex items-center cursor-pointer">
+            <input 
+              type="checkbox" 
+              [checked]="filters.budget.includes('moderate')"
+              (change)="toggleBudgetFilter('moderate')"
+              class="mr-2 rounded"
+            />
+            <span class="text-sm">Moderate ($$)</span>
+          </label>
+          <label class="flex items-center cursor-pointer">
+            <input 
+              type="checkbox" 
+              [checked]="filters.budget.includes('upscale')"
+              (change)="toggleBudgetFilter('upscale')"
+              class="mr-2 rounded"
+            />
+            <span class="text-sm">Upscale ($$$)</span>
+          </label>
+          <label class="flex items-center cursor-pointer">
+            <input 
+              type="checkbox" 
+              [checked]="filters.budget.includes('luxury')"
+              (change)="toggleBudgetFilter('luxury')"
+              class="mr-2 rounded"
+            />
+            <span class="text-sm">Luxury ($$$$)</span>
+          </label>
+        </div>
+        
+        <!-- Dietary -->
+        <label class="text-sm font-medium mt-3">Dietary</label>
+        <div class="space-y-2">
+          <label class="flex items-center cursor-pointer">
+            <input 
+              type="checkbox" 
+              [checked]="filters.dietary.includes('vegetarian')"
+              (change)="toggleDietaryFilter('vegetarian')"
+              class="mr-2 rounded"
+            />
+            <span class="text-sm">Vegetarian</span>
+          </label>
+          <label class="flex items-center cursor-pointer">
+            <input 
+              type="checkbox" 
+              [checked]="filters.dietary.includes('vegan')"
+              (change)="toggleDietaryFilter('vegan')"
+              class="mr-2 rounded"
+            />
+            <span class="text-sm">Vegan</span>
+          </label>
+          <label class="flex items-center cursor-pointer">
+            <input 
+              type="checkbox" 
+              [checked]="filters.dietary.includes('gluten-free')"
+              (change)="toggleDietaryFilter('gluten-free')"
+              class="mr-2 rounded"
+            />
+            <span class="text-sm">Gluten-free</span>
+          </label>
+          <label class="flex items-center cursor-pointer">
+            <input 
+              type="checkbox" 
+              [checked]="filters.dietary.includes('seafood')"
+              (change)="toggleDietaryFilter('seafood')"
+              class="mr-2 rounded"
+            />
+            <span class="text-sm">🐟 Seafood</span>
+          </label>
+        </div>
+        
+        <!-- Accessibility -->
+        <label class="text-sm font-medium mt-3">Accessibility</label>
+        <div class="space-y-2">
+          <label class="flex items-center cursor-pointer">
+            <input 
+              type="checkbox" 
+              [checked]="filters.accessibility.includes('wheelchair-friendly')"
+              (change)="toggleAccessibilityFilter('wheelchair-friendly')"
+              class="mr-2 rounded"
+            />
+            <span class="text-sm">♿ Wheelchair-friendly</span>
+          </label>
+          <label class="flex items-center cursor-pointer">
+            <input 
+              type="checkbox" 
+              [checked]="filters.accessibility.includes('elevator-access')"
+              (change)="toggleAccessibilityFilter('elevator-access')"
+              class="mr-2 rounded"
+            />
+            <span class="text-sm">🛗 Elevator access</span>
+          </label>
+          <label class="flex items-center cursor-pointer">
+            <input 
+              type="checkbox" 
+              [checked]="filters.accessibility.includes('accessible-restroom')"
+              (change)="toggleAccessibilityFilter('accessible-restroom')"
+              class="mr-2 rounded"
+            />
+            <span class="text-sm">🚻 Accessible restroom</span>
+          </label>
+          <label class="flex items-center cursor-pointer">
+            <input 
+              type="checkbox" 
+              [checked]="filters.accessibility.includes('step-free-entrance')"
+              (change)="toggleAccessibilityFilter('step-free-entrance')"
+              class="mr-2 rounded"
+            />
+            <span class="text-sm">🚪 Step-free entrance</span>
+          </label>
+          <label class="flex items-center cursor-pointer">
+            <input 
+              type="checkbox" 
+              [checked]="filters.accessibility.includes('service-animal-friendly')"
+              (change)="toggleAccessibilityFilter('service-animal-friendly')"
+              class="mr-2 rounded"
+            />
+            <span class="text-sm">🐕‍🦺 Service animals welcome</span>
+          </label>
+          <label class="flex items-center cursor-pointer">
+            <input 
+              type="checkbox" 
+              [checked]="filters.accessibility.includes('accessible-parking')"
+              (change)="toggleAccessibilityFilter('accessible-parking')"
+              class="mr-2 rounded"
+            />
+            <span class="text-sm">🅿️  Accessible parking</span>
+          </label>
+        </div>
+        
+        <!-- Reset Button -->
+        <button 
+          (click)="resetFilters()"
+          class="mt-4 px-3 py-2 rounded-xl border border-cosmos-primary text-cosmos-primary hover:bg-cosmos-primary hover:text-white transition w-full"
+        >
+          Reset Filters
+        </button>
+      </div>
+    </div>
+    
+    <!-- Main Content: Places Grid -->
+    <div class="grid gap-4">
+      <div class="flex items-center justify-between">
+        <div>
+          <h2 class="text-xl font-semibold tracking-tight">
+            {{ selectedCity ? 'Explore ' + formatCityName(selectedCity) : 'Select a city to explore' }}
+          </h2>
+          <p class="text-sm text-gray-500">
+            {{ selectedCity ? 'Discover amazing places' : 'Choose a city and click "Start a trip" to begin' }}
+          </p>
+        </div>
+        <div class="flex gap-2">
+          <button class="px-3 py-1.5 rounded-xl border border-cosmos-primary bg-cosmos-primary text-white">
+            List
+          </button>
+          <button class="px-3 py-1.5 rounded-xl border border-cosmos-primary text-cosmos-primary hover:bg-cosmos-primary hover:text-white transition">
+            Map
+          </button>
+        </div>
+      </div>
+      
+      <!-- Places Grid -->
+      <div *ngIf="places.length > 0" class="grid md:grid-cols-3 gap-4">
+        <app-place-card
+          *ngFor="let place of places"
+          [place]="place"
+        ></app-place-card>
+      </div>
+
+      <!-- Empty State -->
+      <div *ngIf="places.length === 0 && !isLoading" class="text-center py-12">
+        <div class="text-6xl mb-4">🗺️</div>
+        <h3 class="text-xl font-semibold text-gray-700 mb-2">No places yet</h3>
+        <p class="text-gray-500">
+          {{ selectedCity ? 'Click "Start a trip" to discover amazing places in ' + selectedCity : 'Select a city and click "Start a trip" to begin exploring' }}
+        </p>
+      </div>
+
+      <!-- Loading State -->
+      <div *ngIf="isLoading" class="text-center py-12">
+        <div class="text-4xl mb-4">⏳</div>
+        <p class="text-gray-500">Loading places...</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Floating Action Button (Chat) -->
+  <button 
+    (click)="openChat()"
+    class="fixed right-4 bottom-24 md:right-8 md:bottom-8 h-12 px-4 rounded-full shadow-lg bg-cosmos-primary text-white flex items-center gap-2 hover:bg-blue-600 transition z-40"
+  >
+    <span>Chat with Assistant</span>
+    <span class="inline-block">💬</span>
+  </button>
+
+  <!-- Chat Drawer -->
+  <div [class.pointer-events-auto]="chatOpen" [class.pointer-events-none]="!chatOpen" class="fixed inset-0 z-50">
+    <!-- Scrim/Backdrop -->
+    <div
+      (click)="closeChat()" 
+      [style.backgroundColor]="chatOpen ? 'rgba(0,0,0,0.3)' : 'transparent'"
+      class="absolute inset-0 transition-colors duration-300"
+    ></div>
+    
+    <!-- Chat Panel -->
+    <div 
+      [class.translate-x-0]="chatOpen"
+      [class.translate-x-full]="!chatOpen"
+      class="absolute right-0 top-0 h-full w-full max-w-md bg-white border-l shadow-xl transform transition-transform duration-300"
+    >
+      <!-- Header -->
+      <div class="h-16 border-b flex items-center justify-between px-4 bg-gradient-to-r from-cosmos-primary to-cosmos-accent text-white">
+        <div class="font-semibold">Chat with Assistant 🤖</div>
+        <button 
+          (click)="closeChat()"
+          class="px-3 py-1.5 rounded-xl border border-white text-white hover:bg-white hover:text-cosmos-primary transition"
+        >
+          Close
+        </button>
+      </div>
+      
+      <!-- Messages -->
+      <div class="h-[calc(100%-8rem)] overflow-y-auto p-4 space-y-3 bg-gray-50">
+        <div *ngIf="!messages || messages.length === 0" class="text-center text-gray-500 mt-8">
+          <div class="text-4xl mb-4">👋</div>
+          <p>Start a conversation with your travel assistant!</p>
+          <p class="text-sm mt-2">Ask about hotels, restaurants, or activities.</p>
+        </div>
+        
+        <app-message 
+          *ngFor="let message of messages" 
+          [message]="message"
+        ></app-message>
+        
+        <div *ngIf="isLoading" class="flex justify-start gap-3">
+          <div class="h-8 w-8 rounded-full bg-gray-200 grid place-items-center">🤖</div>
+          <div class="bg-white rounded-2xl px-4 py-3 border">
+            <div class="flex gap-1">
+              <span class="animate-bounce">●</span>
+              <span class="animate-bounce" style="animation-delay: 0.1s">●</span>
+              <span class="animate-bounce" style="animation-delay: 0.2s">●</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Input -->
+      <div class="h-16 border-t grid grid-cols-[1fr_auto] gap-2 p-3 bg-white">
+        <input 
+          [(ngModel)]="newMessage"
+          (keyup.enter)="sendMessage()"
+          [disabled]="isLoading"
+          class="px-3 py-2 rounded-xl border focus:ring-2 focus:ring-cosmos-primary focus:border-transparent" 
+          placeholder="Ask for recommendations..."
+        />
+        <button 
+          (click)="sendMessage()"
+          [disabled]="!newMessage.trim() || isLoading"
+          [class.opacity-50]="!newMessage.trim() || isLoading"
+          class="px-4 rounded-xl bg-cosmos-primary text-white hover:bg-blue-600 transition disabled:cursor-not-allowed"
+        >
+          Send
+        </button>
+      </div>
+    </div>
+  </div>
+</div>

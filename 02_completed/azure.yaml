@@ -1,0 +1,106 @@
+name: TravelAssistant
+metadata:
+  template: azd-init@1.5.1
+hooks:
+  preprovision:
+    posix:
+      shell: sh
+      interactive: false
+      continueOnError: false
+      run: |
+        # Check if OWNER_EMAIL is already set in azd environment
+        EXISTING_OWNER=$(azd env get-value OWNER_EMAIL 2>/dev/null || echo "")
+        if [ -z "$EXISTING_OWNER" ]; then
+          CURRENT_USER=$(az account show --query user.name -o tsv 2>/dev/null || echo "user@example.com")
+          echo "Auto-setting OWNER_EMAIL to: $CURRENT_USER"
+          azd env set OWNER_EMAIL "$CURRENT_USER"
+        else
+          echo "OWNER_EMAIL already set to: $EXISTING_OWNER"
+        fi
+    windows:
+      shell: pwsh
+      interactive: false
+      continueOnError: false
+      run: |
+        # Set OWNER_EMAIL from current Azure user
+        try {
+          $currentUser = az account show --query user.name -o tsv
+          if ($currentUser -and $currentUser.Trim() -ne "") {
+            Write-Host "Setting OWNER_EMAIL to: $($currentUser.Trim())"
+            azd env set OWNER_EMAIL $currentUser.Trim()
+          } else {
+            Write-Host "Could not get current user, setting default"
+            azd env set OWNER_EMAIL "user@example.com"
+          }
+        } catch {
+          Write-Host "Could not get current user, setting default"
+          azd env set OWNER_EMAIL "user@example.com"
+        }
+  postprovision:
+    posix:
+      shell: sh
+      interactive: true
+      continueOnError: false
+      run: |
+        echo "
+        COSMOSDB_ENDPOINT=\"$COSMOSDB_ENDPOINT\"
+        COSMOS_KEY=\"$COSMOS_KEY\"
+        COSMOS_DB_DATABASE_NAME=\"TravelAssistant\"
+        AZURE_OPENAI_ENDPOINT=\"$AZURE_OPENAI_ENDPOINT\"
+        AZURE_OPENAI_EMBEDDING_DEPLOYMENT=\"$AZURE_OPENAI_EMBEDDINGDEPLOYMENTID\"
+        AZURE_OPENAI_DEPLOYMENT_NAME=\"$AZURE_OPENAI_COMPLETIONSDEPLOYMENTID\"
+        AZURE_OPENAI_API_VERSION=\"2024-12-01-preview\"
+        MCP_AUTH_SECRET_KEY=\"travel-mcp-server-jwt-secret-for-local-development\"
+        MCP_AUTH_TOKEN=\"travel-server-dev-token-2024\"
+        MCP_SERVER_BASE_URL=\"http://localhost:8080\"
+        " > ./python/.env
+
+        echo "✅ Environment file created at ./python/.env"
+        echo ""
+        echo "═══════════════════════════════════════════════════════════════"
+        echo "📋 Loading sample data into Cosmos DB..."
+        echo "═══════════════════════════════════════════════════════════════"
+        echo ""
+
+        # Load data into Cosmos DB
+        cd python
+        python src/seed_data_new.py
+
+        echo ""
+        echo "✅ Data loading complete!"
+        echo ""
+        echo "═══════════════════════════════════════════════════════════════"
+
+    windows:
+      shell: pwsh
+      interactive: true
+      continueOnError: false
+      run: |
+        echo "
+        COSMOSDB_ENDPOINT=""$env:COSMOSDB_ENDPOINT""
+        COSMOS_KEY=""$env:COSMOS_KEY""
+        COSMOS_DB_DATABASE_NAME=""TravelAssistant""
+        AZURE_OPENAI_ENDPOINT=""$env:AZURE_OPENAI_ENDPOINT""
+        AZURE_OPENAI_EMBEDDING_DEPLOYMENT=""$env:AZURE_OPENAI_EMBEDDINGDEPLOYMENTID""
+        AZURE_OPENAI_DEPLOYMENT_NAME=""$env:AZURE_OPENAI_COMPLETIONSDEPLOYMENTID""
+        AZURE_OPENAI_API_VERSION=""2024-12-01-preview""
+        MCP_AUTH_SECRET_KEY=""travel-mcp-server-jwt-secret-for-local-development""
+        MCP_AUTH_TOKEN=""travel-server-dev-token-2024""
+        MCP_SERVER_BASE_URL=""http://localhost:8080""
+        " > ./python/.env
+
+        Write-Host "✅ Environment file created at ./python/.env"
+        Write-Host ""
+        Write-Host "═══════════════════════════════════════════════════════════════"
+        Write-Host "📋 Loading sample data into Cosmos DB..."
+        Write-Host "═══════════════════════════════════════════════════════════════"
+        Write-Host ""
+
+        # Load data into Cosmos DB
+        Set-Location python
+        python src/seed_data_new.py
+
+        Write-Host ""
+        Write-Host "✅ Data loading complete!"
+        Write-Host ""
+        Write-Host "═══════════════════════════════════════════════════════════════"

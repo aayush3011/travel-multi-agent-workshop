@@ -1,0 +1,288 @@
+<div class="max-w-7xl mx-auto grid md:grid-cols-2 gap-8 items-center px-4 pt-10 pb-16 fade-in">
+  <!-- Left Column: Hero Text -->
+  <div>
+    <h1 class="text-4xl md:text-5xl font-bold tracking-tight leading-tight">
+      Plan like a local. <span class="text-cosmos-accent">Remembered</span> like a friend.
+    </h1>
+    <p class="mt-4 text-gray-600 max-w-prose text-lg">
+      A memory-first travel OS that learns your vibe and builds itineraries around what you love.
+    </p>
+    
+    <!-- Trip Planning Form -->
+    <div class="mt-6 space-y-4">
+      <!-- Row 1: Where to, Dates, Travelers -->
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <!-- Where to (Autocomplete) -->
+        <div class="relative">
+          <div class="px-3 py-2 rounded-xl border border-cosmos-primary text-left bg-white">
+            <div class="text-[11px] uppercase tracking-wide text-gray-500">City/Region</div>
+            <input
+              type="text"
+              [(ngModel)]="selectedCity"
+              (input)="onCityInputChange()"
+              (focus)="onCityFocus()"
+              (blur)="onCityBlur()"
+              placeholder="Where to?"
+              class="w-full font-medium text-slate-800 outline-none text-sm bg-transparent"
+            />
+          </div>
+          
+          <!-- Autocomplete Dropdown -->
+          <div 
+            *ngIf="showCityDropdown && filteredCities.length > 0"
+            class="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg max-h-60 overflow-y-auto z-50"
+          >
+            <div 
+              *ngFor="let city of filteredCities"
+              (click)="selectCity(city)"
+              class="px-4 py-2 hover:bg-blue-50 cursor-pointer text-sm"
+            >
+              <div class="font-medium">{{ city.displayName }}</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Dates -->
+        <div class="relative">
+          <div 
+            (click)="toggleDatePicker()"
+            class="px-3 py-2 rounded-xl border border-cosmos-primary text-left bg-white cursor-pointer"
+          >
+            <div class="text-[11px] uppercase tracking-wide text-gray-500">Dates</div>
+            <div class="font-medium text-slate-800 text-sm">
+              {{ getDateRangeDisplay() }}
+            </div>
+          </div>
+          
+          <!-- Date Picker Dropdown -->
+          <div 
+            *ngIf="showDatePicker"
+            class="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg p-4 z-50 min-w-[280px]"
+          >
+            <div class="space-y-3">
+              <div>
+                <label class="text-xs text-gray-500 uppercase tracking-wide">Start Date</label>
+                <input
+                  type="date"
+                  [(ngModel)]="startDate"
+                  class="w-full mt-1 px-3 py-2 rounded-lg border outline-none text-sm"
+                />
+              </div>
+              <div>
+                <label class="text-xs text-gray-500 uppercase tracking-wide">End Date</label>
+                <input
+                  type="date"
+                  [(ngModel)]="endDate"
+                  [min]="startDate"
+                  class="w-full mt-1 px-3 py-2 rounded-lg border outline-none text-sm"
+                />
+              </div>
+              <button 
+                (click)="closeDatePicker()"
+                class="w-full px-3 py-2 rounded-lg bg-cosmos-primary text-white text-sm hover:bg-blue-600"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Travelers -->
+        <div class="relative">
+          <div 
+            (click)="toggleTravelersPicker()"
+            class="px-3 py-2 rounded-xl border border-cosmos-primary text-left bg-white cursor-pointer"
+          >
+            <div class="text-[11px] uppercase tracking-wide text-gray-500">Travelers</div>
+            <div class="font-medium text-slate-800 text-sm">
+              {{ getTravelersDisplay() }}
+            </div>
+          </div>
+          
+          <!-- Travelers Picker Dropdown -->
+          <div 
+            *ngIf="showTravelersPicker"
+            class="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg p-4 z-50 min-w-[240px]"
+          >
+            <div class="space-y-4">
+              <!-- Adults -->
+              <div class="flex items-center justify-between">
+                <div class="text-sm">
+                  <div class="font-medium">Adults</div>
+                  <div class="text-xs text-gray-500">Ages 13+</div>
+                </div>
+                <div class="flex items-center gap-3">
+                  <button 
+                    (click)="decrementAdults()"
+                    [disabled]="travelers.adults <= 1"
+                    class="w-8 h-8 rounded-full border border-gray-300 flex items-center justify-center hover:border-cosmos-primary disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    <span class="text-lg leading-none">−</span>
+                  </button>
+                  <span class="w-8 text-center font-medium">{{ travelers.adults }}</span>
+                  <button 
+                    (click)="incrementAdults()"
+                    [disabled]="travelers.adults >= 10"
+                    class="w-8 h-8 rounded-full border border-gray-300 flex items-center justify-center hover:border-cosmos-primary disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    <span class="text-lg leading-none">+</span>
+                  </button>
+                </div>
+              </div>
+              
+              <!-- Children -->
+              <div class="flex items-center justify-between">
+                <div class="text-sm">
+                  <div class="font-medium">Children</div>
+                  <div class="text-xs text-gray-500">Ages 2-12</div>
+                </div>
+                <div class="flex items-center gap-3">
+                  <button 
+                    (click)="decrementChildren()"
+                    [disabled]="travelers.children <= 0"
+                    class="w-8 h-8 rounded-full border border-gray-300 flex items-center justify-center hover:border-cosmos-primary disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    <span class="text-lg leading-none">−</span>
+                  </button>
+                  <span class="w-8 text-center font-medium">{{ travelers.children }}</span>
+                  <button 
+                    (click)="incrementChildren()"
+                    [disabled]="travelers.children >= 10"
+                    class="w-8 h-8 rounded-full border border-gray-300 flex items-center justify-center hover:border-cosmos-primary disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    <span class="text-lg leading-none">+</span>
+                  </button>
+                </div>
+              </div>
+              
+              <!-- Pets -->
+              <div class="flex items-center justify-between">
+                <div class="text-sm">
+                  <div class="font-medium">Pets</div>
+                  <div class="text-xs text-gray-500">Service animals</div>
+                </div>
+                <div class="flex items-center gap-3">
+                  <button 
+                    (click)="decrementPets()"
+                    [disabled]="travelers.pets <= 0"
+                    class="w-8 h-8 rounded-full border border-gray-300 flex items-center justify-center hover:border-cosmos-primary disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    <span class="text-lg leading-none">−</span>
+                  </button>
+                  <span class="w-8 text-center font-medium">{{ travelers.pets }}</span>
+                  <button 
+                    (click)="incrementPets()"
+                    [disabled]="travelers.pets >= 5"
+                    class="w-8 h-8 rounded-full border border-gray-300 flex items-center justify-center hover:border-cosmos-primary disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    <span class="text-lg leading-none">+</span>
+                  </button>
+                </div>
+              </div>
+              
+              <button 
+                (click)="closeTravelersPicker()"
+                class="w-full px-3 py-2 rounded-lg bg-cosmos-primary text-white text-sm hover:bg-blue-600"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Row 2: Start a trip button -->
+      <div>
+        <button 
+          (click)="startTrip()"
+          class="px-5 py-2.5 rounded-2xl bg-cosmos-primary text-white hover:bg-blue-600 transition shadow-md hover:shadow-lg"
+        >
+          Start a trip
+        </button>
+      </div>
+    </div>
+    
+    <!-- Trending Themes -->
+    <div class="mt-6 text-sm text-gray-500">Trending themes:</div>
+    <div class="mt-2 flex flex-wrap">
+      <app-chip *ngFor="let theme of trendingThemes" [text]="theme"></app-chip>
+    </div>
+  </div>
+  
+  <!-- Right Column: Hero Image -->
+  <div class="aspect-video rounded-3xl overflow-hidden border shadow-xl">
+    <img 
+      src="https://images.unsplash.com/photo-1468436139062-f60a71c5c892?q=80&w=1600&auto=format&fit=crop" 
+      alt="NYC skyline at dusk" 
+      class="h-full w-full object-cover hover:scale-105 transition-transform duration-500"
+    />
+  </div>
+</div>
+
+<!-- Features Section -->
+<div class="max-w-7xl mx-auto px-4 py-16">
+  <div class="text-center mb-12">
+    <h2 class="text-3xl font-bold">Why Cosmos Voyager?</h2>
+    <p class="text-gray-600 mt-2">AI-powered travel planning that understands you</p>
+  </div>
+  
+  <div class="grid md:grid-cols-3 gap-8">
+    <!-- Feature 1 -->
+    <div class="p-6 rounded-2xl border bg-white hover:shadow-lg transition">
+      <div class="text-4xl mb-4">🧠</div>
+      <h3 class="text-xl font-semibold mb-2">Memory-First</h3>
+      <p class="text-gray-600 text-sm">
+        Your preferences, dietary needs, and travel style are remembered across all trips. 
+        No need to repeat yourself.
+      </p>
+    </div>
+    
+    <!-- Feature 2 -->
+    <div class="p-6 rounded-2xl border bg-white hover:shadow-lg transition">
+      <div class="text-4xl mb-4">🤖</div>
+      <h3 class="text-xl font-semibold mb-2">Multi-Agent AI</h3>
+      <p class="text-gray-600 text-sm">
+        Specialized agents for hotels, dining, and activities work together to create 
+        the perfect itinerary.
+      </p>
+    </div>
+    
+    <!-- Feature 3 -->
+    <div class="p-6 rounded-2xl border bg-white hover:shadow-lg transition">
+      <div class="text-4xl mb-4">🗺️</div>
+      <h3 class="text-xl font-semibold mb-2">Smart Discovery</h3>
+      <p class="text-gray-600 text-sm">
+        Vector search finds places that match your vibe, not just keywords. 
+        Discover hidden gems.
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- How It Works -->
+<div class="max-w-7xl mx-auto px-4 py-16 bg-gradient-to-br from-blue-50 to-white rounded-3xl">
+  <div class="text-center mb-12">
+    <h2 class="text-3xl font-bold">How It Works</h2>
+    <p class="text-gray-600 mt-2">Three simple steps to your perfect trip</p>
+  </div>
+  
+  <div class="grid md:grid-cols-3 gap-8">
+    <div class="text-center">
+      <div class="inline-flex items-center justify-center w-12 h-12 rounded-full bg-cosmos-primary text-white font-bold mb-4">1</div>
+      <h3 class="font-semibold mb-2">Tell Us Your Vibe</h3>
+      <p class="text-sm text-gray-600">Share your preferences, dietary needs, and travel style through natural conversation.</p>
+    </div>
+    
+    <div class="text-center">
+      <div class="inline-flex items-center justify-center w-12 h-12 rounded-full bg-cosmos-primary text-white font-bold mb-4">2</div>
+      <h3 class="font-semibold mb-2">AI Finds Perfect Matches</h3>
+      <p class="text-sm text-gray-600">Our agents search and filter places that align with your preferences and memories.</p>
+    </div>
+    
+    <div class="text-center">
+      <div class="inline-flex items-center justify-center w-12 h-12 rounded-full bg-cosmos-primary text-white font-bold mb-4">3</div>
+      <h3 class="font-semibold mb-2">Get Your Itinerary</h3>
+      <p class="text-sm text-gray-600">Receive a personalized day-by-day plan that you can adjust and refine.</p>
+    </div>
+  </div>
+</div>

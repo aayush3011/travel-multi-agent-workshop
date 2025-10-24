@@ -1,0 +1,144 @@
+<div class="max-w-7xl mx-auto px-4 py-6 fade-in">
+  <!-- Header -->
+  <div class="mb-6">
+    <h1 class="text-3xl font-bold tracking-tight">Profile & Memories</h1>
+    <p class="text-gray-600 mt-2">Your preferences and past experiences shape future recommendations</p>
+  </div>
+
+  <div class="grid md:grid-cols-2 gap-6">
+    
+    <!-- Left Column: Preferences -->
+    <div class="rounded-2xl border p-6 bg-white shadow-sm">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-xl font-semibold">Your Travel Preferences</h2>
+        <span class="text-2xl">⚙️</span>
+      </div>
+      
+      <div class="grid grid-cols-1 gap-4">
+        <!-- Budget -->
+        <label class="text-sm font-medium">
+          Budget Preference
+          <select 
+            [(ngModel)]="preferences.budget"
+            class="w-full mt-1 px-3 py-2 rounded-xl border focus:ring-2 focus:ring-cosmos-primary focus:border-transparent"
+          >
+            <option value="budget">Budget ($)</option>
+            <option value="moderate">Moderate ($$)</option>
+            <option value="upscale">Upscale ($$$)</option>
+            <option value="luxury">Luxury ($$$$)</option>
+          </select>
+        </label>
+        
+        <!-- Mobility -->
+        <label class="text-sm font-medium">
+          Preferred Transportation
+          <select 
+            [(ngModel)]="preferences.mobility"
+            class="w-full mt-1 px-3 py-2 rounded-xl border focus:ring-2 focus:ring-cosmos-primary focus:border-transparent"
+          >
+            <option value="walk">Walking</option>
+            <option value="transit">Public Transit</option>
+            <option value="car">Car/Taxi</option>
+            <option value="bike">Bike</option>
+          </select>
+        </label>
+        
+        <!-- Dietary -->
+        <label class="text-sm font-medium">
+          Dietary Restrictions
+          <select 
+            [(ngModel)]="preferences.dietary"
+            class="w-full mt-1 px-3 py-2 rounded-xl border focus:ring-2 focus:ring-cosmos-primary focus:border-transparent"
+          >
+            <option value="any">Any</option>
+            <option value="vegetarian">Vegetarian</option>
+            <option value="vegan">Vegan</option>
+            <option value="gluten-free">Gluten-free</option>
+            <option value="kosher">Kosher</option>
+            <option value="halal">Halal</option>
+          </select>
+        </label>
+        
+        <!-- Time of Day -->
+        <label class="text-sm font-medium">
+          Preferred Activity Time
+          <select 
+            [(ngModel)]="preferences.timeOfDay"
+            class="w-full mt-1 px-3 py-2 rounded-xl border focus:ring-2 focus:ring-cosmos-primary focus:border-transparent"
+          >
+            <option value="any">Any time</option>
+            <option value="morning">Early bird (6am-10am)</option>
+            <option value="afternoon">Afternoon (12pm-5pm)</option>
+            <option value="evening">Night owl (7pm-12am)</option>
+          </select>
+        </label>
+      </div>
+      
+      <button 
+        (click)="savePreferences()"
+        class="mt-6 w-full px-4 py-2 rounded-xl bg-cosmos-primary text-white hover:bg-blue-600 transition"
+      >
+        Save Preferences
+      </button>
+    </div>
+    
+    <!-- Right Column: Memories & Past Highlights -->
+    <div class="space-y-6">
+      
+      <!-- Stored Memories -->
+      <div class="rounded-2xl border p-6 bg-white shadow-sm">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-xl font-semibold">Stored Memories</h2>
+          <span class="text-2xl">🧠</span>
+        </div>
+        
+        <div *ngIf="memories.length === 0" class="text-center py-8 text-gray-500">
+          <p>No memories stored yet</p>
+          <p class="text-sm mt-2">Chat with the concierge to save preferences</p>
+        </div>
+        
+        <div *ngIf="memories.length > 0" class="space-y-3">
+          <div 
+            *ngFor="let memory of memories"
+            class="rounded-xl border p-3 hover:bg-gray-50 transition"
+          >
+            <div class="flex items-start justify-between">
+              <div class="flex-1">
+                <div class="font-semibold text-sm">{{ memory.text }}</div>
+                <div class="text-xs text-gray-600 mt-1">
+                  Category: {{ memory.facets['category'] || 'N/A' }}
+                </div>
+                <div class="text-xs text-gray-400 mt-1">
+                  Type: {{ memory.memoryType }} • Salience: {{ memory.salience }}
+                </div>
+                <div class="text-xs text-gray-400 mt-1">
+                  {{ memory.justification }}
+                </div>
+              </div>
+              <button 
+                (click)="deleteMemory(memory)"
+                class="ml-2 px-2 py-1 text-xs rounded-lg border border-red-300 text-red-600 hover:bg-red-50 transition"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Data Privacy Notice -->
+  <div class="mt-8 p-4 rounded-xl bg-blue-50 border border-blue-200">
+    <div class="flex gap-3">
+      <span class="text-2xl">🔒</span>
+      <div>
+        <h3 class="font-semibold text-sm">Your Data, Your Control</h3>
+        <p class="text-xs text-gray-600 mt-1">
+          All preferences and memories are stored securely in Azure Cosmos DB. 
+          You can delete any memory at any time. Your data is never shared with third parties.
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
