@@ -12,6 +12,9 @@ param location string
 @description('Id of the user or app to assign application roles')
 param principalId string
 
+@description('Id of the service principal to assign application roles (optional - if not provided, SP roles will be skipped)')
+param servicePrincipalId string = ''
+
 @description('Owner tag for resource tagging')
 param owner string = 'defaultuser@example.com'
 
@@ -77,11 +80,11 @@ module openAi './shared/openai.bicep' = {
 //Deploy OpenAI Deployments
 var deployments = [
   {
-    name: 'gpt-4o-mini'
+    name: 'gpt-4.1-mini'
     skuCapacity: 30
 	skuName: 'GlobalStandard'
-    modelName: 'gpt-4o-mini'
-    modelVersion: '2024-07-18'
+    modelName: 'gpt-4.1-mini'
+    modelVersion: '2025-04-14'
   }
   {
     name: 'text-embedding-3-small'
@@ -117,6 +120,7 @@ module AssignRoles './shared/assignroles.bicep' = {
     openAIName: openAi.outputs.name
     identityName: managedIdentity.outputs.name
 	  userPrincipalId: !empty(principalId) ? principalId : null
+	servicePrincipalId: !empty(servicePrincipalId) ? servicePrincipalId : ''
   }
   scope: rg
 }
