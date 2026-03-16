@@ -25,6 +25,12 @@ resource cosmosDb 'Microsoft.DocumentDB/databaseAccounts@2024-05-15' = {
     }
     databaseAccountOfferType: 'Standard'
     disableLocalAuth: true
+    backupPolicy: {
+      type: 'Continuous'
+      continuousModeProperties: {
+        tier: 'Continuous7Days'
+      }
+    }
     locations: [
       {
         failoverPriority: 0
@@ -33,9 +39,6 @@ resource cosmosDb 'Microsoft.DocumentDB/databaseAccounts@2024-05-15' = {
       }
     ]
     capabilities: [
-      {
-        name: 'EnableServerless'
-      }
       {
         name: 'EnableNoSQLVectorSearch'
       }
@@ -87,6 +90,11 @@ resource cosmosContainerSessions 'Microsoft.DocumentDB/databaseAccounts/sqlDatab
             path: '/"_etag"/?'
           }
         ]
+      }
+    }
+    options: {
+      autoscaleSettings: {
+        maxThroughput: 1000
       }
     }
   }
@@ -166,6 +174,11 @@ resource cosmosContainerMessages 'Microsoft.DocumentDB/databaseAccounts/sqlDatab
         ]
       }
     }
+    options: {
+      autoscaleSettings: {
+        maxThroughput: 1000
+      }
+    }
   }
   tags: tags
 }
@@ -235,6 +248,11 @@ resource cosmosContainerSummaries 'Microsoft.DocumentDB/databaseAccounts/sqlData
         ]
       }
     }
+    options: {
+      autoscaleSettings: {
+        maxThroughput: 1000
+      }
+    }
   }
   tags: tags
 }
@@ -302,6 +320,11 @@ resource cosmosContainerMemories 'Microsoft.DocumentDB/databaseAccounts/sqlDatab
             language: 'en-US'
           }
         ]
+      }
+    }
+    options: {
+      autoscaleSettings: {
+        maxThroughput: 1000
       }
     }
   }
@@ -387,6 +410,11 @@ resource cosmosContainerPlaces 'Microsoft.DocumentDB/databaseAccounts/sqlDatabas
         ]
       }
     }
+    options: {
+      autoscaleSettings: {
+        maxThroughput: 1000
+      }
+    }
   }
   tags: tags
 }
@@ -424,6 +452,11 @@ resource cosmosContainerTrips 'Microsoft.DocumentDB/databaseAccounts/sqlDatabase
         ]
       }
     }
+    options: {
+      autoscaleSettings: {
+        maxThroughput: 1000
+      }
+    }
   }
   tags: tags
 }
@@ -457,6 +490,11 @@ resource cosmosContainerUsers 'Microsoft.DocumentDB/databaseAccounts/sqlDatabase
             path: '/"_etag"/?'
           }
         ]
+      }
+    }
+    options: {
+      autoscaleSettings: {
+        maxThroughput: 1000
       }
     }
   }
@@ -496,6 +534,11 @@ resource cosmosContainerApiEvents 'Microsoft.DocumentDB/databaseAccounts/sqlData
         ]
       }
     }
+    options: {
+      autoscaleSettings: {
+        maxThroughput: 1000
+      }
+    }
   }
   tags: tags
 }
@@ -533,6 +576,11 @@ resource cosmosContainerDebugLogs 'Microsoft.DocumentDB/databaseAccounts/sqlData
         ]
       }
     }
+    options: {
+      autoscaleSettings: {
+        maxThroughput: 1000
+      }
+    }
   }
   tags: tags
 }
@@ -566,6 +614,11 @@ resource cosmosContainerCheckpoints 'Microsoft.DocumentDB/databaseAccounts/sqlDa
             path: '/"_etag"/?'
           }
         ]
+      }
+    }
+    options: {
+      autoscaleSettings: {
+        maxThroughput: 1000
       }
     }
   }
