@@ -48,6 +48,7 @@ You need three terminals, each running one service.
 
 ```powershell
 cd 02_completed\mcp_server
+..\venv\Scripts\Activate.ps1
 $env:PYTHONPATH="..\python"
 python mcp_http_server.py
 ```
@@ -58,6 +59,7 @@ Wait until you see `Travel Assistant MCP server initialized` before starting the
 
 ```powershell
 cd 02_completed\python
+..\venv\Scripts\Activate.ps1
 uvicorn src.app.travel_agents_api:app --reload --host 0.0.0.0 --port 8000
 ```
 
