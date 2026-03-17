@@ -1,7 +1,5 @@
 # Travel Multi-Agent Analytics Guide
 
-> **Note — Cosmos DB infrastructure changes:** The Bicep templates on the `analytics` branch differ from the main workshop. Serverless mode (`EnableServerless` capability) has been removed and replaced with **provisioned autoscale** (1,000 RU/s max per container) and a **Continuous 7-day backup policy**. These changes are required because Microsoft Fabric mirroring does not support serverless Cosmos DB accounts — it requires continuous backup, which is only available on provisioned throughput accounts.
-
 This guide walks you through generating realistic data in the Travel Multi-Agent application, then using Microsoft Fabric to analyze multi-agent memory patterns, trip planning behavior, and user preferences.
 
 ## What You'll Build
