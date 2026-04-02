@@ -193,8 +193,11 @@ export class ExploreComponent implements OnInit, OnDestroy, AfterViewChecked {
         
         // Backend returns only NEW messages (user + assistant) — append to existing
         if (Array.isArray(response)) {
-          // Remove the optimistic user message — server's version replaces it
-          this.messages = this.messages.filter(m => !(m.role === 'user' && m.content === userMessage && !m.timestamp));
+          // Remove the optimistic user message only if server returned a user message
+          const hasServerUserMsg = response.some(msg => msg.senderRole === 'User');
+          if (hasServerUserMsg) {
+            this.messages = this.messages.filter(m => !(m.role === 'user' && m.content === userMessage && !m.timestamp));
+          }
           
           const newMessages = response.map(msg => ({
             role: (msg.senderRole === 'User' ? 'user' : 'assistant') as 'user' | 'assistant',

@@ -232,8 +232,9 @@ def append_message(
 ) -> str:
     """
     Append a message to a session.
-    Keywords are extracted locally (no LLM call). Embeddings are deferred
-    to avoid blocking the response path.
+    Keywords are extracted locally (no LLM call) and stored with the message.
+    Message embeddings are not generated or stored; they can be backfilled
+    later if needed for semantic search.
     
     Args:
         session_id: Session identifier
@@ -1254,6 +1255,10 @@ def get_user_by_id(user_id: str, tenant_id: str) -> Optional[Dict[str, Any]]:
         return None
     try:
         user = users_container.read_item(item=user_id, partition_key=user_id)
+        # Validate tenant isolation
+        if user.get("tenantId") != tenant_id:
+            logger.warning(f"Tenant mismatch for user {user_id}: expected {tenant_id}")
+            return None
         return user
     except CosmosResourceNotFoundError:
         logger.warning(f"User not found: {user_id}")
