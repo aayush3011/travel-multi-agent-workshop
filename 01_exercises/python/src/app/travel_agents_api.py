@@ -1343,28 +1343,24 @@ def search_places(search_request: PlaceSearchRequest):
         List of Place objects matching the search criteria (top 5 by vector similarity)
     """
     try:
-        # Generate embedding for query
-        vectors = generate_embedding(search_request.query)
-
         # Extract filters
-        place_type = search_request.filters.get("type") if search_request.filters else None
-        price_tier = search_request.filters.get("priceTier") if search_request.filters else None
-        dietary = search_request.filters.get("dietary") if search_request.filters else None
-        accessibility = search_request.filters.get("accessibility") if search_request.filters else None
-        tags = search_request.filters.get("tags") if search_request.filters else None
+        filters = search_request.filters or {}
+        place_type = filters.get("type")
+        price_tier = filters.get("priceTier")
+        dietary = filters.get("dietary")
+        accessibility = filters.get("accessibility")
 
         logger.info(
-            f"🔍 search_places called with filters: type={place_type}, priceTier={price_tier}, dietary={dietary}, accessibility={accessibility}, tags={tags}")
+            f"🔍 search_places called with filters: type={place_type}, priceTier={price_tier}, dietary={dietary}, accessibility={accessibility}")
 
-        # Query places with all filters
+        # Call query_places_hybrid with the correct parameters
         places = query_places_hybrid(
-            vectors=vectors,
+            query=search_request.query,
             geo_scope_id=search_request.geoScope.lower(),
             place_type=place_type,
             price_tier=price_tier,
             dietary=dietary,
-            accessibility=accessibility,
-            tags=tags
+            accessibility=accessibility
         )
 
         return [Place(**place) for place in places]

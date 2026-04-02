@@ -7,6 +7,8 @@ from azure.cosmos import CosmosClient
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
 from langgraph_checkpoint_cosmosdb import CosmosDBSaver
+from langsmith import traceable
+
 from src.app.services.azure_open_ai import generate_embedding, extract_keywords
 
 logging.basicConfig(level=logging.DEBUG)
@@ -137,48 +139,17 @@ def update_session_container(session_doc: dict):
 
 
 def patch_active_agent(tenantId: str, userId: str, sessionId: str, activeAgent: str):
-    """
-    Patch the active agent field in the sessions' container.
-    Uses Cosmos DB patch operation for efficiency.
-    If the field doesn't exist, it will be added instead of replaced.
-    """
+    """Patch the active agent field using 'set' operation (no read needed)."""
     if sessions_container is None:
         logger.warning("Sessions container not initialized")
         return
-    
     try:
         pk = [tenantId, userId, sessionId]
-        
-        # Try to read the document first to check if activeAgent exists
-        try:
-            session_doc = sessions_container.read_item(item=sessionId, partition_key=pk)
-            # Field exists, use replace
-            operation = 'replace' if 'activeAgent' in session_doc else 'add'
-        except:
-            # Document might not exist or can't be read, try add
-            operation = 'add'
-        
-        operations = [
-            {'op': operation, 'path': '/activeAgent', 'value': activeAgent}
-        ]
-        
-        sessions_container.patch_item(
-            item=sessionId, 
-            partition_key=pk,
-            patch_operations=operations
-        )
-        logger.info(f"Patched active agent to '{activeAgent}' for session: {sessionId} (operation: {operation})")
+        operations = [{'op': 'set', 'path': '/activeAgent', 'value': activeAgent}]
+        sessions_container.patch_item(item=sessionId, partition_key=pk, patch_operations=operations)
+        logger.info(f"✅ Patched active agent to '{activeAgent}' for session: {sessionId}")
     except Exception as e:
-        logger.error(f"Error patching active agent for tenantId: {tenantId}, userId: {userId}, sessionId: {sessionId}: {e}")
-        # Fallback: Try to update the whole document
-        try:
-            session_doc = sessions_container.read_item(item=sessionId, partition_key=pk)
-            session_doc['activeAgent'] = activeAgent
-            sessions_container.upsert_item(session_doc)
-            logger.info(f"Updated active agent via upsert to '{activeAgent}' for session: {sessionId}")
-        except Exception as fallback_error:
-            logger.error(f"Fallback upsert also failed: {fallback_error}")
-            # Don't raise - this is not critical for operation
+        logger.error(f"❌ Error patching active agent for session {sessionId}: {e}")
 
 
 # ============================================================================
@@ -211,49 +182,42 @@ def create_session_record(user_id: str, tenant_id: str, activeAgent: str, title:
     return session
 
 
+@traceable(run_type="retriever")
 def get_session_by_id(session_id: str, tenant_id: str, user_id: str) -> Optional[Dict[str, Any]]:
-    """Get session by ID"""
+    """Get session by ID using point read (partition key known)"""
     if not sessions_container:
         raise Exception("Cosmos DB not available")
-    
     try:
-        query = """
-        SELECT * FROM c 
-        WHERE c.sessionId = @sessionId 
-        AND c.tenantId = @tenantId 
-        AND c.userId = @userId
-        """
-        items = list(sessions_container.query_items(
-            query=query,
-            parameters=[
-                {"name": "@sessionId", "value": session_id},
-                {"name": "@tenantId", "value": tenant_id},
-                {"name": "@userId", "value": user_id}
-            ],
-            enable_cross_partition_query=True
-        ))
-        return items[0] if items else None
+        return sessions_container.read_item(
+            item=session_id,
+            partition_key=[tenant_id, user_id, session_id]
+        )
     except Exception as e:
-        logger.error(f"Error getting session: {e}")
+        logger.debug(f"Session not found: {session_id} - {e}")
         return None
 
 
+@traceable
 def update_session_activity(session_id: str, tenant_id: str, user_id: str):
-    """Update session's last activity timestamp"""
+    """Update session's last activity timestamp using patch (single round trip)"""
     if not sessions_container:
         return
-    
-    session = get_session_by_id(session_id, tenant_id, user_id)
-    if session:
-        session["lastActivityAt"] = datetime.now(UTC).isoformat()
-        session["messageCount"] = session.get("messageCount", 0) + 1
-        sessions_container.upsert_item(session)
+    try:
+        pk = [tenant_id, user_id, session_id]
+        operations = [
+            {'op': 'set', 'path': '/lastActivityAt', 'value': datetime.now(UTC).isoformat()},
+            {'op': 'incr', 'path': '/messageCount', 'value': 1}
+        ]
+        sessions_container.patch_item(item=session_id, partition_key=pk, patch_operations=operations)
+    except Exception as e:
+        logger.error(f"Error updating session activity: {e}")
 
 
 # ============================================================================
 # Message Management Functions
 # ============================================================================
 
+@traceable
 def append_message(
     session_id: str,
     tenant_id: str,
@@ -264,7 +228,8 @@ def append_message(
 ) -> str:
     """
     Append a message to a session.
-    Automatically generates embeddings and keywords if content is provided.
+    Keywords are extracted locally (no LLM call). Embeddings are deferred
+    to avoid blocking the response path.
     
     Args:
         session_id: Session identifier
@@ -280,8 +245,7 @@ def append_message(
     if not messages_container:
         raise Exception("Cosmos DB not available")
     
-    # Generate embedding and keywords
-    embedding = generate_embedding(content)
+    # Keywords extracted via lightweight regex (no LLM call after perf fix)
     keywords = extract_keywords(content)
     
     message_id = f"msg_{uuid.uuid4().hex[:12]}"
@@ -296,16 +260,15 @@ def append_message(
         "role": role,
         "content": content,
         "toolCalls": tool_calls or [],
-        "embedding": embedding,
+        "embedding": [],  # Deferred — can be backfilled by background job
         "ts": now.isoformat(),
         "keywords": keywords or [],
         "superseded": False
     }
     
     messages_container.upsert_item(message)
-    update_session_activity(session_id, tenant_id, user_id)
     
-    logger.info(f"Appended message: {message_id} to session: {session_id}")
+    logger.info(f"✅ Appended message: {message_id} to session: {session_id}")
     return message_id
 
 
@@ -336,7 +299,7 @@ def get_message_by_id(
                 {"name": "@tenantId", "value": tenant_id},
                 {"name": "@userId", "value": user_id}
             ],
-            enable_cross_partition_query=True
+            partition_key=[tenant_id, user_id, session_id]
         ))
         
         return items[0] if items else None
@@ -373,7 +336,7 @@ def get_session_messages(
             {"name": "@tenantId", "value": tenant_id},
             {"name": "@userId", "value": user_id}
         ],
-        enable_cross_partition_query=True
+        partition_key=[tenant_id, user_id, session_id]
     ))
     
     return items
@@ -393,7 +356,7 @@ def count_active_messages(
     
     try:
         query = """
-        SELECT c.id
+        SELECT VALUE COUNT(1)
         FROM c 
         WHERE c.sessionId = @sessionId 
         AND c.tenantId = @tenantId 
@@ -411,10 +374,10 @@ def count_active_messages(
         results = list(messages_container.query_items(
             query=query, 
             parameters=params,
-            enable_cross_partition_query=True
+            partition_key=[tenant_id, user_id, session_id]
         ))
         
-        count = len(results)
+        count = results[0] if results else 0
         logger.info(f"📊 Active message count for session {session_id}: {count}")
         return count
         
@@ -485,24 +448,29 @@ def create_summary(
     }
     messages_container.upsert_item(message_doc)
     
-    # Mark superseded messages
+    # Mark superseded messages using patch (avoid read+upsert per message)
     if supersedes:
+        pk = [tenant_id, user_id, session_id]
         for msg_id in supersedes:
             try:
-                # Note: In production, you'd use bulk operations or patches
-                # For now, using simple query + update
-                query = "SELECT * FROM c WHERE c.messageId = @msgId"
+                # Query within partition to find the document id
+                query = "SELECT c.id FROM c WHERE c.messageId = @msgId"
                 items = list(messages_container.query_items(
                     query=query,
                     parameters=[{"name": "@msgId", "value": msg_id}],
-                    enable_cross_partition_query=True
+                    partition_key=pk
                 ))
                 if items:
-                    msg = items[0]
-                    msg["superseded"] = True
-                    msg["ttl"] = 2592000  # 30 days
-                    messages_container.upsert_item(msg)
-            except Exception as ex:
+                    doc_id = items[0]["id"]
+                    messages_container.patch_item(
+                        item=doc_id,
+                        partition_key=pk,
+                        patch_operations=[
+                            {'op': 'set', 'path': '/superseded', 'value': True},
+                            {'op': 'set', 'path': '/ttl', 'value': 2592000}  # 30 days
+                        ]
+                    )
+            except Exception as e:
                 logger.error(f"Error marking message {msg_id} as superseded: {e}")
     
     logger.info(f"Created summary: {summary_id} (message: {message_id}) superseding {len(supersedes or [])} messages")
@@ -533,7 +501,7 @@ def get_session_summaries(
             {"name": "@tenantId", "value": tenant_id},
             {"name": "@userId", "value": user_id}
         ],
-        enable_cross_partition_query=True
+        partition_key=[tenant_id, user_id, session_id]
     ))
     
     return items
@@ -623,6 +591,7 @@ def store_memory(
     return memory_id
 
 
+@traceable
 def update_memory_last_used(
     memory_id: str,
     user_id: str,
@@ -631,25 +600,15 @@ def update_memory_last_used(
     """Update the lastUsedAt timestamp for a memory when it's recalled/used"""
     if not memories_container:
         return
-    
     try:
-        # Read the memory
-        memory = memories_container.read_item(
-            item=memory_id,
-            partition_key=[tenant_id, user_id, memory_id]
-        )
-        
-        # Update lastUsedAt
-        now = datetime.now(UTC)
-        memory["lastUsedAt"] = now.isoformat()
-        
-        # Upsert back
-        memories_container.upsert_item(memory)
-        logger.debug(f"Updated lastUsedAt for memory: {memory_id}")
+        pk = [tenant_id, user_id, memory_id]
+        operations = [{'op': 'set', 'path': '/lastUsedAt', 'value': datetime.now(UTC).isoformat()}]
+        memories_container.patch_item(item=memory_id, partition_key=pk, patch_operations=operations)
     except Exception as e:
-        logger.error(f"Failed to update memory lastUsedAt: {e}")
+        logger.error(f"❌ Failed to update memory lastUsedAt: {e}")
 
 
+@traceable
 def supersede_memory(
         memory_id: str,
         user_id: str,
@@ -670,25 +629,16 @@ def supersede_memory(
     """
     if not memories_container:
         return False
-
     try:
-        # Read the memory
-        memory = memories_container.read_item(
-            item=memory_id,
-            partition_key=[tenant_id, user_id, memory_id]
-        )
-
-        # Mark as superseded
-        now = datetime.now(UTC)
-        memory["supersededBy"] = superseded_by
-        memory["supersededAt"] = now.isoformat()
-
-        # Upsert back
-        memories_container.upsert_item(memory)
-        logger.info(f"Memory {memory_id} superseded by {superseded_by}")
+        pk = [tenant_id, user_id, memory_id]
+        operations = [
+            {'op': 'set', 'path': '/supersededBy', 'value': superseded_by},
+            {'op': 'set', 'path': '/supersededAt', 'value': datetime.now(UTC).isoformat()}
+        ]
+        memories_container.patch_item(item=memory_id, partition_key=pk, patch_operations=operations)
         return True
     except Exception as e:
-        logger.error(f"Failed to supersede memory {memory_id}: {e}")
+        logger.error(f"❌ Failed to supersede memory {memory_id}: {e}")
         return False
 
 
@@ -943,7 +893,7 @@ def query_places_hybrid(
         items = list(places_container.query_items(
             query=query_sql,
             parameters=params,
-            enable_cross_partition_query=True
+            partition_key=geo_scope_id
         ))
         logger.info(f"Returned {len(items)} items")
         return items
@@ -1071,7 +1021,7 @@ def query_places_with_theme(
         items = list(places_container.query_items(
             query=query_sql,
             parameters=params,
-            enable_cross_partition_query=True
+            partition_key=geo_scope_id
         ))
         logger.info(f"Returned {len(items)} items")
         return items
@@ -1160,7 +1110,7 @@ def query_places_filtered(
         items = list(places_container.query_items(
             query=query_sql,
             parameters=params,
-            enable_cross_partition_query=True
+            partition_key=geo_scope_id
         ))
         logger.info(f"Returned {len(items)} items")
         return items
@@ -1216,30 +1166,15 @@ def create_trip(
     return trip_id
 
 
+@traceable(run_type="retriever")
 def get_trip(trip_id: str, user_id: str, tenant_id: str) -> Optional[Dict[str, Any]]:
     """Get a trip by ID"""
     if not trips_container:
         return None
-    
     try:
-        query = """
-        SELECT * FROM c 
-        WHERE c.tripId = @tripId 
-        AND c.userId = @userId 
-        AND c.tenantId = @tenantId
-        """
-        items = list(trips_container.query_items(
-            query=query,
-            parameters=[
-                {"name": "@tripId", "value": trip_id},
-                {"name": "@userId", "value": user_id},
-                {"name": "@tenantId", "value": tenant_id}
-            ],
-            enable_cross_partition_query=True
-        ))
-        return items[0] if items else None
+        return trips_container.read_item(item=trip_id, partition_key=[tenant_id, user_id, trip_id])
     except Exception as e:
-        logger.error(f"Error getting trip: {e}")
+        logger.debug(f"Trip not found: {trip_id} - {e}")
         return None
 
 
@@ -1306,33 +1241,16 @@ def get_all_users(tenant_id: str) -> List[Dict[str, Any]]:
         return []
 
 
+@traceable(run_type="retriever")
 def get_user_by_id(user_id: str, tenant_id: str) -> Optional[Dict[str, Any]]:
     """Get a user by ID"""
     if not users_container:
         return None
-    
     try:
-        query = """
-        SELECT * FROM c 
-        WHERE c.userId = @userId 
-        AND c.tenantId = @tenantId
-        """
-        items = list(users_container.query_items(
-            query=query,
-            parameters=[
-                {"name": "@userId", "value": user_id},
-                {"name": "@tenantId", "value": tenant_id}
-            ],
-            enable_cross_partition_query=True
-        ))
-        if items:
-            logger.info(f"Retrieved user: {user_id}")
-            return items[0]
-        else:
-            logger.warning(f" User not found: {user_id}")
-            return None
+        user = users_container.read_item(item=user_id, partition_key=user_id)
+        return user
     except Exception as e:
-        logger.error(f"Error getting user: {e}")
+        logger.warning(f"User not found: {user_id} - {e}")
         return None
 
 

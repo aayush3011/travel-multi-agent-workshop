@@ -762,8 +762,7 @@ def extract_relevant_messages(
     
     logger.info(f"Last active agent: {last_agent_name}")
     
-    # Update active agent in session
-    patch_active_agent(tenantId, userId, sessionId, last_agent_name)
+    # Agent patching moved to _post_response_background for non-blocking response
     
     if not last_agent_node:
         return []
@@ -871,6 +870,36 @@ def process_messages_background(message_tuples: List[tuple], userId: str, tenant
         logger.error(f"Error storing messages: {e}")
 
 
+def _post_response_background(sessionId: str, tenantId: str, userId: str, response_data, messages):
+    """
+    Background task: store debug log, persist messages, update agent state.
+    Runs after HTTP response is already sent to the client.
+    """
+    try:
+        debug_log_id = store_debug_log_from_response(sessionId, tenantId, userId, response_data)
+        
+        # Update debug log ID on message models
+        for msg_model, _ in messages:
+            msg_model.debugLogId = debug_log_id
+        
+        process_messages_background(messages, userId, tenantId, sessionId)
+        
+        # Patch active agent
+        last_agent_name = "unknown"
+        for i in range(len(response_data) - 1, -1, -1):
+            if "__interrupt__" in response_data[i]:
+                if i > 0:
+                    last_agent_name = list(response_data[i - 1].keys())[0]
+                break
+        if last_agent_name == "unknown" and response_data:
+            last_agent_name = list(response_data[-1].keys())[0] if response_data[-1] else "unknown"
+        
+        patch_active_agent(tenantId, userId, sessionId, last_agent_name)
+        logger.info(f"✅ Background processing complete for session {sessionId}")
+    except Exception as e:
+        logger.error(f"❌ Background processing error for session {sessionId}: {e}")
+
+
 @app.post(
     "/tenant/{tenantId}/user/{userId}/sessions/{sessionId}/completion",
     tags=[CHAT_TAG],
@@ -948,40 +977,22 @@ async def get_chat_completion(
             
             response_data = await workflow.ainvoke(last_state, config, stream_mode="updates")
         
-        # Store debug log in Cosmos DB
-        debug_log_id = store_debug_log_from_response(sessionId, tenantId, userId, response_data)
-        
-        # Extract messages
+        # Extract messages (lightweight — just parses response_data)
         messages = extract_relevant_messages(
-            debug_log_id, last_active_agent, response_data, 
+            "", last_active_agent, response_data, 
             tenantId, userId, sessionId
         )
         
-        # Store messages SYNCHRONOUSLY before returning (not in background)
-        # This ensures they're in the database when we retrieve all messages
-        process_messages_background(messages, userId, tenantId, sessionId)
-
-        # Now retrieve ALL messages from the database (including the ones we just stored)
-        all_messages = get_session_messages(sessionId, tenantId, userId)
+        # Build response immediately from extracted messages
+        response_models = [msg_model for msg_model, _ in messages]
         
-        # Convert to MessageModel format for API response
-        return [
-            MessageModel(
-                id=msg.get("id", str(uuid.uuid4())),
-                type="message",
-                sessionId=sessionId,
-                tenantId=tenantId,
-                userId=userId,
-                timeStamp=msg.get("ts") or msg.get("timeStamp", datetime.utcnow().isoformat()),
-                sender=msg.get("sender", "Assistant"),
-                senderRole="User" if msg.get("role") == "user" else "Assistant",
-                text=msg.get("content", ""),
-                debugLogId=msg.get("debugLogId", ""),
-                tokensUsed=msg.get("tokensUsed", 0),
-                rating=msg.get("rating")
-            )
-            for msg in all_messages
-        ]
+        # Offload ALL storage to background (debug log, messages, agent patch)
+        background_tasks.add_task(
+            _post_response_background,
+            sessionId, tenantId, userId, response_data, messages
+        )
+        
+        return response_models
 
     except Exception as e:
         logger.error(f"Error in chat completion: {e}")
@@ -1278,7 +1289,7 @@ def delete_memory(tenantId: str, userId: str, memoryId: str):
 )
 def search_places(search_request: PlaceSearchRequest):
     """
-    Search for hotels, restaurants, or attractions using vector similarity.
+    Search for hotels, restaurants, or attractions using hybrid RRF search.
     
     This endpoint uses semantic search with optional filters for type, price tier,
     dietary options, accessibility features, and tags.
@@ -1287,30 +1298,27 @@ def search_places(search_request: PlaceSearchRequest):
         search_request: PlaceSearchRequest with search parameters and optional filters
     
     Returns:
-        List of Place objects matching the search criteria (top 5 by vector similarity)
+        List of Place objects matching the search criteria
     """
     try:
-        # Generate embedding for query
-        vectors = generate_embedding(search_request.query)
-        
         # Extract filters
-        place_type = search_request.filters.get("type") if search_request.filters else None
-        price_tier = search_request.filters.get("priceTier") if search_request.filters else None
-        dietary = search_request.filters.get("dietary") if search_request.filters else None
-        accessibility = search_request.filters.get("accessibility") if search_request.filters else None
-        tags = search_request.filters.get("tags") if search_request.filters else None
+        filters = search_request.filters or {}
+        place_type = filters.get("type")
+        price_tier = filters.get("priceTier")
+        dietary = filters.get("dietary")
+        accessibility = filters.get("accessibility")
         
-        logger.info(f"🔍 search_places called with filters: type={place_type}, priceTier={price_tier}, dietary={dietary}, accessibility={accessibility}, tags={tags}")
+        logger.info(f"🔍 search_places called with filters: type={place_type}, priceTier={price_tier}, dietary={dietary}, accessibility={accessibility}")
         
-        # Query places with all filters
+        # Call query_places_hybrid with the correct parameters
+        # The function handles embedding generation and keyword extraction internally
         places = query_places_hybrid(
-            vectors=vectors,
+            query=search_request.query,
             geo_scope_id=search_request.geoScope.lower(),
             place_type=place_type,
             price_tier=price_tier,
             dietary=dietary,
-            accessibility=accessibility,
-            tags=tags
+            accessibility=accessibility
         )
         
         return [Place(**place) for place in places]
