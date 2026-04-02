@@ -202,7 +202,11 @@ export class ExploreComponent implements OnInit, OnDestroy, AfterViewChecked {
             timestamp: msg.timeStamp
           }));
           
-          this.messages = [...this.messages, ...newMessages];
+          this.messages = [...this.messages, ...newMessages].sort((a: any, b: any) => {
+            const timeA = new Date(a.timestamp || 0).getTime();
+            const timeB = new Date(b.timestamp || 0).getTime();
+            return timeA - timeB;
+          });
           
           console.log('Appended messages:', newMessages.map(m => ({
             role: m.role,
