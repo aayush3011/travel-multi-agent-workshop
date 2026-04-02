@@ -214,7 +214,7 @@ def get_session_by_id(session_id: str, tenant_id: str, user_id: str) -> Optional
 
 
 @traceable
-def update_session_activity(session_id: str, tenant_id: str, user_id: str):
+def update_session_activity(session_id: str, tenant_id: str, user_id: str, message_count: int = 1):
     """Update session's last activity timestamp using patch (single round trip)"""
     if not sessions_container:
         return
@@ -223,7 +223,7 @@ def update_session_activity(session_id: str, tenant_id: str, user_id: str):
         pk = [tenant_id, user_id, session_id]
         operations = [
             {'op': 'set', 'path': '/lastActivityAt', 'value': datetime.now(UTC).isoformat()},
-            {'op': 'incr', 'path': '/messageCount', 'value': 1}
+            {'op': 'incr', 'path': '/messageCount', 'value': message_count}
         ]
         sessions_container.patch_item(
             item=session_id,

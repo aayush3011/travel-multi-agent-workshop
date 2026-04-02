@@ -864,8 +864,8 @@ def process_messages_background(message_tuples: List[tuple], userId: str, tenant
                 tool_calls=tool_calls
             )
         
-        # Update session activity
-        update_session_activity(sessionId, tenantId, userId)
+        # Update session activity with actual message count
+        update_session_activity(sessionId, tenantId, userId, message_count=len(message_tuples))
         
         logger.info(f"✅ Stored {len(message_tuples)} messages for session {sessionId}")
     except Exception as e:
