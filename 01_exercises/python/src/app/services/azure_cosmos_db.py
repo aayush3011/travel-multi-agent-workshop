@@ -4,6 +4,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import List, Dict, Optional, Any
 from azure.cosmos import CosmosClient
+from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
 from langgraph_checkpoint_cosmosdb import CosmosDBSaver
@@ -192,8 +193,11 @@ def get_session_by_id(session_id: str, tenant_id: str, user_id: str) -> Optional
             item=session_id,
             partition_key=[tenant_id, user_id, session_id]
         )
+    except CosmosResourceNotFoundError:
+        logger.debug(f"Session not found: {session_id}")
+        return None
     except Exception as e:
-        logger.debug(f"Session not found: {session_id} - {e}")
+        logger.error(f"Error reading session {session_id}: {e}")
         return None
 
 
@@ -1172,8 +1176,11 @@ def get_trip(trip_id: str, user_id: str, tenant_id: str) -> Optional[Dict[str, A
         return None
     try:
         return trips_container.read_item(item=trip_id, partition_key=[tenant_id, user_id, trip_id])
+    except CosmosResourceNotFoundError:
+        logger.debug(f"Trip not found: {trip_id}")
+        return None
     except Exception as e:
-        logger.debug(f"Trip not found: {trip_id} - {e}")
+        logger.error(f"Error reading trip {trip_id}: {e}")
         return None
 
 
@@ -1248,8 +1255,11 @@ def get_user_by_id(user_id: str, tenant_id: str) -> Optional[Dict[str, Any]]:
     try:
         user = users_container.read_item(item=user_id, partition_key=user_id)
         return user
+    except CosmosResourceNotFoundError:
+        logger.warning(f"User not found: {user_id}")
+        return None
     except Exception as e:
-        logger.warning(f"User not found: {user_id} - {e}")
+        logger.error(f"Error reading user {user_id}: {e}")
         return None
 
 
