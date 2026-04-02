@@ -870,21 +870,26 @@ def process_messages_background(message_tuples: List[tuple], userId: str, tenant
         logger.error(f"Error storing messages: {e}")
 
 
-def _post_response_background(sessionId: str, tenantId: str, userId: str, response_data, messages):
+def _post_response_background(sessionId: str, tenantId: str, userId: str, response_data, messages, debug_log_id: str):
     """
     Background task: store debug log, persist messages, update agent state.
     Runs after HTTP response is already sent to the client.
+    Each step is guarded independently so one failure doesn't block the others.
     """
+    # Step 1: Store debug log
     try:
-        debug_log_id = store_debug_log_from_response(sessionId, tenantId, userId, response_data)
-        
-        # Update debug log ID on message models
-        for msg_model, _ in messages:
-            msg_model.debugLogId = debug_log_id
-        
+        store_debug_log_from_response(sessionId, tenantId, userId, response_data)
+    except Exception as e:
+        logger.error(f"❌ Failed to store debug log for session {sessionId}: {e}")
+    
+    # Step 2: Persist messages (runs even if debug log failed)
+    try:
         process_messages_background(messages, userId, tenantId, sessionId)
-        
-        # Patch active agent
+    except Exception as e:
+        logger.error(f"❌ Failed to persist messages for session {sessionId}: {e}")
+    
+    # Step 3: Patch active agent
+    try:
         last_agent_name = "unknown"
         for i in range(len(response_data) - 1, -1, -1):
             if "__interrupt__" in response_data[i]:
@@ -895,9 +900,10 @@ def _post_response_background(sessionId: str, tenantId: str, userId: str, respon
             last_agent_name = list(response_data[-1].keys())[0] if response_data[-1] else "unknown"
         
         patch_active_agent(tenantId, userId, sessionId, last_agent_name)
-        logger.info(f"✅ Background processing complete for session {sessionId}")
     except Exception as e:
-        logger.error(f"❌ Background processing error for session {sessionId}: {e}")
+        logger.error(f"❌ Failed to patch active agent for session {sessionId}: {e}")
+    
+    logger.info(f"✅ Background processing complete for session {sessionId}")
 
 
 @app.post(
@@ -977,9 +983,12 @@ async def get_chat_completion(
             
             response_data = await workflow.ainvoke(last_state, config, stream_mode="updates")
         
+        # Generate debug log ID upfront so it's available in the response
+        debug_log_id = str(uuid.uuid4())
+        
         # Extract messages (lightweight — just parses response_data)
         messages = extract_relevant_messages(
-            "", last_active_agent, response_data, 
+            debug_log_id, last_active_agent, response_data, 
             tenantId, userId, sessionId
         )
         
@@ -989,7 +998,7 @@ async def get_chat_completion(
         # Offload ALL storage to background (debug log, messages, agent patch)
         background_tasks.add_task(
             _post_response_background,
-            sessionId, tenantId, userId, response_data, messages
+            sessionId, tenantId, userId, response_data, messages, debug_log_id
         )
         
         return response_models

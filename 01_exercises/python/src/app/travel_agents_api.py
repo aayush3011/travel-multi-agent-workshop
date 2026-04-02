@@ -1331,16 +1331,16 @@ def delete_memory(tenantId: str, userId: str, memoryId: str):
 )
 def search_places(search_request: PlaceSearchRequest):
     """
-    Search for hotels, restaurants, or attractions using vector similarity.
+    Search for hotels, restaurants, or attractions using hybrid RRF search.
 
-    This endpoint uses semantic search with optional filters for type, price tier,
-    dietary options, accessibility features, and tags.
+    This endpoint uses hybrid search (full-text + vector) with optional filters
+    for type, price tier, dietary options, and accessibility features.
 
     Args:
         search_request: PlaceSearchRequest with search parameters and optional filters
 
     Returns:
-        List of Place objects matching the search criteria (top 5 by vector similarity)
+        List of Place objects matching the search criteria
     """
     try:
         # Extract filters

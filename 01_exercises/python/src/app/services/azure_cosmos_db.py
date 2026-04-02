@@ -260,7 +260,6 @@ def append_message(
         "role": role,
         "content": content,
         "toolCalls": tool_calls or [],
-        "embedding": [],  # Deferred — can be backfilled by background job
         "ts": now.isoformat(),
         "keywords": keywords or [],
         "superseded": False
