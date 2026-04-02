@@ -646,7 +646,7 @@ def delete_session(tenantId: str, userId: str, sessionId: str, background_tasks:
 # Chat Completion Endpoint
 # ============================================================================
 
-def store_debug_log_from_response(sessionId: str, tenantId: str, userId: str, response_data: List[Dict]) -> str:
+def store_debug_log_from_response(sessionId: str, tenantId: str, userId: str, response_data: List[Dict], debug_log_id: str = None) -> str:
     """
     Extract debug information from LangGraph response and store in Cosmos DB.
     
@@ -655,6 +655,7 @@ def store_debug_log_from_response(sessionId: str, tenantId: str, userId: str, re
         tenantId: Tenant identifier
         userId: User identifier
         response_data: LangGraph response data containing agent messages
+        debug_log_id: Optional pre-generated debug log ID
     
     Returns:
         Debug log ID
@@ -708,7 +709,7 @@ def store_debug_log_from_response(sessionId: str, tenantId: str, userId: str, re
     
     # Store in Cosmos DB using the new function
     try:
-        debug_log_id = store_debug_log(
+        stored_id = store_debug_log(
             session_id=sessionId,
             tenant_id=tenantId,
             user_id=userId,
@@ -724,11 +725,12 @@ def store_debug_log_from_response(sessionId: str, tenantId: str, userId: str, re
             transfer_success=transfer_success,
             tool_calls=tool_calls,
             logprobs=logprobs,
-            content_filter_results=content_filter_results
+            content_filter_results=content_filter_results,
+            debug_log_id=debug_log_id
         )
         
-        logger.info(f"✅ Debug log stored: {debug_log_id} for session {sessionId} (agent: {agent_selected}, tokens: {total_tokens})")
-        return debug_log_id
+        logger.info(f"✅ Debug log stored: {stored_id} for session {sessionId} (agent: {agent_selected}, tokens: {total_tokens})")
+        return stored_id
     except Exception as e:
         logger.error(f"❌ Failed to store debug log: {e}")
         # Return a placeholder ID if storage fails
@@ -878,7 +880,7 @@ def _post_response_background(sessionId: str, tenantId: str, userId: str, respon
     """
     # Step 1: Store debug log
     try:
-        store_debug_log_from_response(sessionId, tenantId, userId, response_data)
+        store_debug_log_from_response(sessionId, tenantId, userId, response_data, debug_log_id=debug_log_id)
     except Exception as e:
         logger.error(f"❌ Failed to store debug log for session {sessionId}: {e}")
     
@@ -1293,7 +1295,7 @@ def delete_memory(tenantId: str, userId: str, memoryId: str):
     "/places/search",
     tags=[PLACES_TAG],
     summary="Search Places",
-    description="Vector search with optional filters (type, price, dietary, accessibility, tags) - useful for theme-based searches",
+    description="Hybrid search (full-text + vector) with optional filters (type, price, dietary, accessibility) - useful for theme-based searches",
     response_model=List[Place]
 )
 def search_places(search_request: PlaceSearchRequest):
@@ -1316,6 +1318,12 @@ def search_places(search_request: PlaceSearchRequest):
         price_tier = filters.get("priceTier")
         dietary = filters.get("dietary")
         accessibility = filters.get("accessibility")
+        
+        # Coerce to lists (query_places_hybrid expects List[str])
+        if dietary and not isinstance(dietary, list):
+            dietary = [dietary]
+        if accessibility and not isinstance(accessibility, list):
+            accessibility = [accessibility]
         
         logger.info(f"🔍 search_places called with filters: type={place_type}, priceTier={price_tier}, dietary={dietary}, accessibility={accessibility}")
         

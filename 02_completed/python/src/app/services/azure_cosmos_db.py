@@ -1343,7 +1343,8 @@ def store_debug_log(
     transfer_success: bool = False,
     tool_calls: List[Dict[str, Any]] = None,
     logprobs: Optional[Dict[str, Any]] = None,
-    content_filter_results: Optional[Dict[str, Any]] = None
+    content_filter_results: Optional[Dict[str, Any]] = None,
+    debug_log_id: Optional[str] = None
 ) -> str:
     """
     Store detailed debug log information in Cosmos DB.
@@ -1372,7 +1373,8 @@ def store_debug_log(
     if not debug_logs_container:
         raise Exception("Debug logs container not available")
     
-    debug_log_id = str(uuid.uuid4())
+    if not debug_log_id:
+        debug_log_id = str(uuid.uuid4())
     message_id = str(uuid.uuid4())
     timestamp = datetime.now(UTC).isoformat()
     
