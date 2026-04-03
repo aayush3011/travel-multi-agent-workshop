@@ -1326,7 +1326,7 @@ def delete_memory(tenantId: str, userId: str, memoryId: str):
     "/places/search",
     tags=[PLACES_TAG],
     summary="Search Places",
-    description="Vector search with optional filters (type, price, dietary, accessibility, tags) - useful for theme-based searches",
+    description="Hybrid search (full-text + vector) with optional filters (type, price, dietary, accessibility) - useful for theme-based searches",
     response_model=List[Place]
 )
 def search_places(search_request: PlaceSearchRequest):
@@ -1349,6 +1349,12 @@ def search_places(search_request: PlaceSearchRequest):
         price_tier = filters.get("priceTier")
         dietary = filters.get("dietary")
         accessibility = filters.get("accessibility")
+
+        # Coerce to lists (query_places_hybrid expects List[str])
+        if dietary and not isinstance(dietary, list):
+            dietary = [dietary]
+        if accessibility and not isinstance(accessibility, list):
+            accessibility = [accessibility]
 
         logger.info(
             f"🔍 search_places called with filters: type={place_type}, priceTier={price_tier}, dietary={dietary}, accessibility={accessibility}")

@@ -295,13 +295,25 @@ def recall_memories(
         List of memory dictionaries with scores and match reasons
     """
     logger.info(f"🔍 Recalling memories for user: {user_id}")
-    # For now, return top memories by salience
     memories = query_memories(
         user_id=user_id,
         tenant_id=tenant_id,
         query=query,
         min_salience=min_salience
     )
+    
+    # Update lastUsedAt for recalled memories to keep recency metadata fresh
+    for memory in memories:
+        memory_id = memory.get("memoryId") or memory.get("id")
+        if memory_id:
+            try:
+                update_memory_last_used(
+                    memory_id=memory_id,
+                    user_id=user_id,
+                    tenant_id=tenant_id
+                )
+            except Exception as e:
+                logger.debug(f"Could not update lastUsedAt for memory {memory_id}: {e}")
     
     return memories
 

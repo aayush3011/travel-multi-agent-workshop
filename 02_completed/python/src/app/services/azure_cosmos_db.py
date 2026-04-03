@@ -4,6 +4,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import List, Dict, Optional, Any
 from azure.cosmos import CosmosClient
+from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
 from langgraph_checkpoint_cosmosdb import CosmosDBSaver
@@ -204,13 +205,16 @@ def get_session_by_id(session_id: str, tenant_id: str, user_id: str) -> Optional
             item=session_id,
             partition_key=[tenant_id, user_id, session_id]
         )
+    except CosmosResourceNotFoundError:
+        logger.debug(f"Session not found: {session_id}")
+        return None
     except Exception as e:
-        logger.debug(f"Session not found: {session_id} - {e}")
+        logger.error(f"Error reading session {session_id}: {e}")
         return None
 
 
 @traceable
-def update_session_activity(session_id: str, tenant_id: str, user_id: str):
+def update_session_activity(session_id: str, tenant_id: str, user_id: str, message_count: int = 1):
     """Update session's last activity timestamp using patch (single round trip)"""
     if not sessions_container:
         return
@@ -219,7 +223,7 @@ def update_session_activity(session_id: str, tenant_id: str, user_id: str):
         pk = [tenant_id, user_id, session_id]
         operations = [
             {'op': 'set', 'path': '/lastActivityAt', 'value': datetime.now(UTC).isoformat()},
-            {'op': 'incr', 'path': '/messageCount', 'value': 1}
+            {'op': 'incr', 'path': '/messageCount', 'value': message_count}
         ]
         sessions_container.patch_item(
             item=session_id,
@@ -244,8 +248,9 @@ def append_message(
 ) -> str:
     """
     Append a message to a session.
-    Keywords are extracted locally (no LLM call). Embeddings are deferred
-    to avoid blocking the response path.
+    Keywords are extracted locally (no LLM call) and stored with the message.
+    Message embeddings are not generated or stored; they can be backfilled
+    later if needed for semantic search.
     
     Args:
         session_id: Session identifier
@@ -1198,8 +1203,11 @@ def get_trip(trip_id: str, user_id: str, tenant_id: str) -> Optional[Dict[str, A
             item=trip_id,
             partition_key=[tenant_id, user_id, trip_id]
         )
+    except CosmosResourceNotFoundError:
+        logger.debug(f"Trip not found: {trip_id}")
+        return None
     except Exception as e:
-        logger.debug(f"Trip not found: {trip_id} - {e}")
+        logger.error(f"Error reading trip {trip_id}: {e}")
         return None
 
 
@@ -1278,10 +1286,17 @@ def get_user_by_id(user_id: str, tenant_id: str) -> Optional[Dict[str, Any]]:
             item=user_id,
             partition_key=user_id
         )
+        # Validate tenant isolation
+        if user.get("tenantId") != tenant_id:
+            logger.warning(f"⚠️  Tenant mismatch for user {user_id}: expected {tenant_id}")
+            return None
         logger.info(f"✅ Retrieved user: {user_id}")
         return user
+    except CosmosResourceNotFoundError:
+        logger.warning(f"⚠️  User not found: {user_id}")
+        return None
     except Exception as e:
-        logger.warning(f"⚠️  User not found: {user_id} - {e}")
+        logger.error(f"Error reading user {user_id}: {e}")
         return None
 
 
@@ -1343,7 +1358,8 @@ def store_debug_log(
     transfer_success: bool = False,
     tool_calls: List[Dict[str, Any]] = None,
     logprobs: Optional[Dict[str, Any]] = None,
-    content_filter_results: Optional[Dict[str, Any]] = None
+    content_filter_results: Optional[Dict[str, Any]] = None,
+    debug_log_id: Optional[str] = None
 ) -> str:
     """
     Store detailed debug log information in Cosmos DB.
@@ -1372,7 +1388,8 @@ def store_debug_log(
     if not debug_logs_container:
         raise Exception("Debug logs container not available")
     
-    debug_log_id = str(uuid.uuid4())
+    if not debug_log_id:
+        debug_log_id = str(uuid.uuid4())
     message_id = str(uuid.uuid4())
     timestamp = datetime.now(UTC).isoformat()
     
