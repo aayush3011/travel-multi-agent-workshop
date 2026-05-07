@@ -10,6 +10,10 @@ Deploy the complete solution 👉  **[Deploy to Azure](../README.md#deployment-i
 
 📖 **[User Guide](./USER_GUIDE.md)** — how to use the travel assistant, interact with agents, manage memories, and get the best results.
 
+## Memory layer
+
+Memory is provided by the `agent_memory_toolkit` SDK, installed in development as an editable dependency pointing at `../AgentMemoryToolkit` (TODO: switch to the published PyPI package). The toolkit auto-creates its Cosmos DB `memories`, `counter`, and `leases` containers on first run, so no Bicep container resources are needed for memory. Every 10 chat turns, a background auto-flush produces summaries, facts, and a `user_summary`. Memory records are partitioned by `(user_id, thread_id)`; `tenantId` remains for sessions, messages, and trips, but is no longer part of memory records. Memory prompts ship inside the toolkit, so `preference_extraction.prompty`, `memory_conflict_resolution.prompty`, and `summarizer.prompty` have been removed from this repo.
+
 ## Project Structure
 
 ```

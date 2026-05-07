@@ -28,6 +28,7 @@ Run: python src/seed_data_new.py
 
 import json
 import os
+import uuid
 import sys
 import asyncio
 import concurrent.futures
@@ -340,24 +341,6 @@ CONTAINER_CONFIGS = {
         "full_text_paths": ["/content", "/keywords"],
         "description": "Chat messages with embeddings"
     },
-    "Summaries": {
-        "partition_key": ["/tenantId", "/userId", "/sessionId"],
-        "hierarchical": True,
-        "vector_search": True,
-        "full_text_search": True,
-        "vector_paths": ["/embedding"],
-        "full_text_paths": ["/text"],
-        "description": "Conversation summaries with embeddings"
-    },
-    "Memories": {
-        "partition_key": ["/tenantId", "/userId", "/memoryId"],
-        "hierarchical": True,
-        "vector_search": True,
-        "full_text_search": True,
-        "vector_paths": ["/embedding"],
-        "full_text_paths": ["/text"],
-        "description": "User memories (declarative, episodic, procedural)"
-    },
     "Places": {
         "partition_key": "/geoScopeId",
         "hierarchical": False,
@@ -582,23 +565,119 @@ def seed_users(container):
     print(f"   ✅ Seeded {len(users)} users")
 
 
-def seed_memories(container):
-    """Load memories from memories.json and generate embeddings concurrently"""
-    print("\n🧠 Seeding MEMORIES...")
+SEED_CONVERSATIONS: Dict[str, Dict[str, Any]] = {
+    "tony": {
+        "turns": [
+            ("user", "Hi! I'm planning some travel and wanted to set up my preferences."),
+            ("agent", "Great, Tony! Tell me what kind of travel you usually enjoy and any restrictions I should keep in mind."),
+            ("user", "I prefer luxury 5-star hotels with spa amenities and modern architecture."),
+            ("agent", "Got it — luxury hotels with spa and modern design. Any dietary or accessibility needs?"),
+            ("user", "I'm vegetarian and I avoid seafood entirely."),
+            ("agent", "Understood. Vegetarian, no seafood. Anything else worth remembering about food?"),
+            ("user", "Yes — going forward, whenever you suggest restaurants always include at least two vegetarian-friendly options and never recommend sushi or seafood places."),
+            ("agent", "Got it — that's a standing rule for any restaurant suggestion."),
+            ("user", "I love art museums, contemporary galleries, and street photography."),
+            ("agent", "Noted — art museums, contemporary galleries, and street photography for activities."),
+            ("user", "Last month I tried a budget hotel in Berlin to save money on a work trip — the wifi kept dropping during my video calls and I had to expense a co-working space. Lesson learned: for any business trip, prioritize reliable wifi over price."),
+            ("agent", "Logged — Berlin budget-hotel experience, and the takeaway about prioritizing wifi for business travel."),
+            ("user", "And I usually travel for work, so I prefer rooftop bars and quiet evenings."),
+            ("agent", "Perfect. I'll keep all of that in mind for future trips."),
+        ],
+    },
+    "steve": {
+        "turns": [
+            ("user", "Hey, I want to lock in some travel preferences."),
+            ("agent", "Sure, Steve. What kind of trips do you typically take?"),
+            ("user", "I love hiking, outdoor adventures, and national parks."),
+            ("agent", "Great — outdoor and hiking it is. Any food or accessibility considerations?"),
+            ("user", "I have a peanut allergy, so restaurants need to be peanut-safe."),
+            ("agent", "Important note — peanut allergy, peanut-safe dining required."),
+            ("user", "Make this a hard rule: never recommend any Thai, Indonesian, or Malaysian restaurants for me, since cross-contamination with peanuts is too common."),
+            ("agent", "Understood — that's a standing rule. No Thai, Indonesian, or Malaysian recommendations."),
+            ("user", "For accommodations I prefer boutique hotels or rustic lodges, mid-range budget."),
+            ("agent", "Noted: boutique or rustic lodges, mid-range pricing."),
+            ("user", "Two summers ago I booked a guided multi-day trek in Patagonia with Andes Outfitters. The guide was fantastic and the small-group format was perfect for me — that kind of trip is exactly what I want more of."),
+            ("agent", "Logged — Patagonia trek with Andes Outfitters as a positive reference experience for future trip planning."),
+            ("user", "I usually travel solo and like quiet, off-the-beaten-path destinations."),
+            ("agent", "Understood — solo, quiet, off-the-beaten-path. I'll remember all of that."),
+        ],
+    },
+}
 
-    memories = load_json_file("memories.json")
 
-    if not memories:
-        print("   ⚠️  No memories to seed")
+def seed_memories():
+    """Seed the toolkit ``memories`` container by replaying realistic
+    conversations through the live AgentMemoryToolkit pipeline.
+
+    For each pre-seeded user we:
+      1. Insert ~10 ``turn`` records via ``add_turn``.
+      2. Call ``flush`` so the toolkit produces a thread ``summary`` plus
+         extracted ``fact`` records (with real embeddings).
+      3. Call ``generate_user_summary`` so a cross-thread ``user_summary``
+         exists for the user.
+
+    Peter and Bruce are intentionally left empty — the workshop modules
+    use those personas for "blank slate" exercises.
+    """
+    print("\n🧠 Seeding MEMORIES (toolkit pipeline)...")
+
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from src.app.services.agent_memory import get_memory_client
+    except Exception as exc:
+        print(f"   ⚠️  Could not import agent_memory.get_memory_client: {exc}")
+        print("   Skipping memory seed (toolkit not available).")
         return
 
-    # # Generate embeddings concurrently
-    # memories = generate_embeddings_concurrent(memories, "text")
+    try:
+        client = get_memory_client()
+    except Exception as exc:
+        print(f"   ⚠️  Failed to initialize toolkit memory client: {exc}")
+        print("   Skipping memory seed.")
+        return
 
-    # Upload data concurrently
-    upload_items_concurrent(container, memories, "memories")
+    seeded_users = 0
+    for user_id, conv in SEED_CONVERSATIONS.items():
+        thread_id = f"session_{uuid.uuid4().hex[:12]}"
+        turns = conv["turns"]
+        print(f"\n   👤 Seeding memories for {user_id} ({len(turns)} turns → {thread_id})")
 
-    print(f"   ✅ Seeded {len(memories)} memories with embeddings")
+        try:
+            for role, content in turns:
+                client.add_cosmos(
+                    user_id=user_id,
+                    thread_id=thread_id,
+                    role=role,
+                    content=content,
+                    memory_type="turn",
+                )
+            print(f"      ✅ Added {len(turns)} turn records")
+        except Exception as exc:
+            print(f"      ❌ add_turn failed for {user_id}: {exc}")
+            continue
+
+        try:
+            result = client.process_now(user_id=user_id, thread_id=thread_id)
+            extracted = getattr(result, "extracted_counts", {}) or {}
+            print(
+                "      ✅ Flushed pipeline (summary + facts): "
+                f"facts={extracted.get('facts_count', 0)}, "
+                f"deduped={getattr(result, 'deduplicated_count', 0)}"
+            )
+        except Exception as exc:
+            print(f"      ❌ flush failed for {user_id}: {exc}")
+            continue
+
+        try:
+            client.generate_user_summary(user_id=user_id)
+            print("      ✅ Generated user_summary")
+        except Exception as exc:
+            print(f"      ⚠️  generate_user_summary failed for {user_id}: {exc}")
+
+        seeded_users += 1
+
+    print(f"\n   ✅ Seeded toolkit memories for {seeded_users}/{len(SEED_CONVERSATIONS)} users")
+    print("   ℹ️  peter and bruce intentionally left empty for workshop exercises")
 
 
 def seed_places(container):
@@ -686,9 +765,9 @@ def seed_all_data(containers: Dict[str, Any]):
 
     # Seed each container
     seed_users(containers["Users"])
-    seed_memories(containers["Memories"])
     seed_places(containers["Places"])
     seed_trips(containers["Trips"])
+    seed_memories()
 
     end_time = time.time()
     total_time = end_time - start_time
