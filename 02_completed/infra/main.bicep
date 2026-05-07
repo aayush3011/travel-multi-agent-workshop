@@ -18,6 +18,9 @@ param servicePrincipalId string = ''
 @description('Owner tag for resource tagging')
 param owner string = 'defaultuser@example.com'
 
+@description('Override the resource group name. Defaults to rg-<environmentName>.')
+param resourceGroupName string = ''
+
 var tags = {
   'azd-env-name': environmentName
   'owner': owner
@@ -27,7 +30,7 @@ var abbrs = loadJsonContent('./abbreviations.json')
 var resourceToken = toLower(uniqueString(subscription().id, environmentName, location))
 
 resource rg 'Microsoft.Resources/resourceGroups@2022-09-01' = {
-  name: 'rg-${environmentName}'
+  name: !empty(resourceGroupName) ? resourceGroupName : 'rg-${environmentName}'
   location: location
   tags: tags
 }
@@ -53,8 +56,6 @@ module cosmos './shared/cosmosdb.bicep' = {
     databaseName: 'TravelAssistant'
     sessionsContainerName: 'Sessions'
     messagesContainerName: 'Messages'
-    summariesContainerName: 'Summaries'
-    memoriesContainerName: 'Memories'
     apiEventsContainerName: 'ApiEvents'
     placesContainerName: 'Places'
     tripsContainerName: 'Trips'

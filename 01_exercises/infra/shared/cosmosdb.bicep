@@ -2,8 +2,6 @@
 param databaseName string
 param sessionsContainerName string
 param messagesContainerName string
-param summariesContainerName string
-param memoriesContainerName string
 param apiEventsContainerName string
 param placesContainerName string
 param tripsContainerName string
@@ -170,145 +168,7 @@ resource cosmosContainerMessages 'Microsoft.DocumentDB/databaseAccounts/sqlDatab
   tags: tags
 }
 
-// Container 3: Summaries
-// Partition Key: [/tenantId, /userId, /sessionId] (hierarchical)
-// Vector search: /embedding (1024 dims, cosine, diskANN)
-// Full-text search: /text (en-us)
-resource cosmosContainerSummaries 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-12-01-preview' = {
-  parent: database
-  name: summariesContainerName
-  properties: {
-    resource: {
-      id: summariesContainerName
-      partitionKey: {
-        paths: [
-          '/tenantId'
-          '/userId'
-          '/sessionId'
-        ]
-        kind: 'MultiHash'
-        version: 2
-      }
-      indexingPolicy: {
-        indexingMode: 'consistent'
-        automatic: true
-        includedPaths: [
-          {
-            path: '/*'
-          }
-        ]
-        excludedPaths: [
-          {
-            path: '/"_etag"/?'
-          }
-        ]
-        vectorIndexes: [
-          {
-            path: '/embedding'
-            type: 'diskANN'
-          }
-        ]
-        fullTextIndexes: [
-          {
-            path: '/text'
-            language: 'en-us'
-          }
-        ]
-      }
-      vectorEmbeddingPolicy: {
-        vectorEmbeddings: [
-          {
-            path: '/embedding'
-            dataType: 'float32'
-            distanceFunction: 'cosine'
-            dimensions: 1024
-          }
-        ]
-      }
-      fullTextPolicy: {
-        defaultLanguage: 'en-US'
-        fullTextPaths: [
-          {
-            path: '/text'
-            language: 'en-US'
-          }
-        ]
-      }
-    }
-  }
-  tags: tags
-}
-
-// Container 4: Memories
-// Partition Key: [/tenantId, /userId, /memoryId] (hierarchical)
-// Vector search: /embedding (1024 dims, cosine, diskANN)
-// Full-text search: /text (en-us)
-resource cosmosContainerMemories 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-12-01-preview' = {
-  parent: database
-  name: memoriesContainerName
-  properties: {
-    resource: {
-      id: memoriesContainerName
-      partitionKey: {
-        paths: [
-          '/tenantId'
-          '/userId'
-          '/memoryId'
-        ]
-        kind: 'MultiHash'
-        version: 2
-      }
-      indexingPolicy: {
-        indexingMode: 'consistent'
-        automatic: true
-        includedPaths: [
-          {
-            path: '/*'
-          }
-        ]
-        excludedPaths: [
-          {
-            path: '/"_etag"/?'
-          }
-        ]
-        vectorIndexes: [
-          {
-            path: '/embedding'
-            type: 'diskANN'
-          }
-        ]
-        fullTextIndexes: [
-          {
-            path: '/text'
-            language: 'en-us'
-          }
-        ]
-      }
-      vectorEmbeddingPolicy: {
-        vectorEmbeddings: [
-          {
-            path: '/embedding'
-            dataType: 'float32'
-            distanceFunction: 'cosine'
-            dimensions: 1024
-          }
-        ]
-      }
-      fullTextPolicy: {
-        defaultLanguage: 'en-US'
-        fullTextPaths: [
-          {
-            path: '/text'
-            language: 'en-US'
-          }
-        ]
-      }
-    }
-  }
-  tags: tags
-}
-
-// Container 5: Places
+// Container 3: Places
 // Partition Key: /geoScopeId (simple)
 // Vector search: /embedding (1024 dims, cosine, diskANN)
 // Full-text search: /name, /description, /tags (en-us)
@@ -391,7 +251,7 @@ resource cosmosContainerPlaces 'Microsoft.DocumentDB/databaseAccounts/sqlDatabas
   tags: tags
 }
 
-// Container 6: Trips
+// Container 4: Trips
 // Partition Key: [/tenantId, /userId, /tripId] (hierarchical)
 // No vector search, no full-text search
 resource cosmosContainerTrips 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-12-01-preview' = {
@@ -428,7 +288,7 @@ resource cosmosContainerTrips 'Microsoft.DocumentDB/databaseAccounts/sqlDatabase
   tags: tags
 }
 
-// Container 7: Users
+// Container 5: Users
 // Partition Key: /userId (simple)
 // No vector search, no full-text search
 resource cosmosContainerUsers 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-12-01-preview' = {
@@ -463,7 +323,7 @@ resource cosmosContainerUsers 'Microsoft.DocumentDB/databaseAccounts/sqlDatabase
   tags: tags
 }
 
-// Container 8: API Events
+// Container 6: API Events
 // Partition Key: [/tenantId, /userId, /sessionId] (hierarchical) - UPDATED
 // No vector search, no full-text search
 resource cosmosContainerApiEvents 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-12-01-preview' = {
@@ -500,7 +360,7 @@ resource cosmosContainerApiEvents 'Microsoft.DocumentDB/databaseAccounts/sqlData
   tags: tags
 }
 
-// Container 9: Debug Logs
+// Container 7: Debug Logs
 // Partition Key: [/tenantId, /userId, /sessionId] (hierarchical)
 // No vector search, no full-text search
 resource cosmosContainerDebugLogs 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-12-01-preview' = {
@@ -537,7 +397,7 @@ resource cosmosContainerDebugLogs 'Microsoft.DocumentDB/databaseAccounts/sqlData
   tags: tags
 }
 
-// Container 10: Checkpoints (LangGraph)
+// Container 8: Checkpoints (LangGraph)
 // Partition Key: /session_id (simple)
 // No vector search, no full-text search
 resource cosmosContainerCheckpoints 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-12-01-preview' = {

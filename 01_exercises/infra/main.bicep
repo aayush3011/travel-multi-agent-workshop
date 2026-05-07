@@ -18,6 +18,9 @@ param servicePrincipalId string = ''
 @description('Owner tag for resource tagging')
 param owner string = 'defaultuser@example.com'
 
+@description('Override the resource group name. Defaults to rg-<environmentName>.')
+param resourceGroupName string = ''
+
 var tags = {
   'azd-env-name': environmentName
   'owner': owner
@@ -27,7 +30,7 @@ var abbrs = loadJsonContent('./abbreviations.json')
 var resourceToken = toLower(uniqueString(subscription().id, environmentName, location))
 
 resource rg 'Microsoft.Resources/resourceGroups@2022-09-01' = {
-  name: 'rg-${environmentName}'
+  name: !empty(resourceGroupName) ? resourceGroupName : 'rg-${environmentName}'
   location: location
   tags: tags
 }
@@ -46,15 +49,13 @@ module managedIdentity './shared/managedidentity.bicep' = {
 // Deploy Azure Cosmos DB
 module cosmos './shared/cosmosdb.bicep' = {
   name: 'cosmos'
-  params: {    
+  params: {
     name: '${abbrs.documentDBDatabaseAccounts}${resourceToken}'
     location: location
     tags: tags
     databaseName: 'TravelAssistant'
     sessionsContainerName: 'Sessions'
     messagesContainerName: 'Messages'
-    summariesContainerName: 'Summaries'
-    memoriesContainerName: 'Memories'
     apiEventsContainerName: 'ApiEvents'
     placesContainerName: 'Places'
     tripsContainerName: 'Trips'
@@ -80,10 +81,10 @@ module openAi './shared/openai.bicep' = {
 //Deploy OpenAI Deployments
 var deployments = [
   {
-    name: 'gpt-4.1'
+    name: 'gpt-4.1-mini'
     skuCapacity: 30
 	skuName: 'GlobalStandard'
-    modelName: 'gpt-4.1'
+    modelName: 'gpt-4.1-mini'
     modelVersion: '2025-04-14'
   }
   {
