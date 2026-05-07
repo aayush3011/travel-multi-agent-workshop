@@ -255,7 +255,6 @@ agent_mapping = {
     "activity": "Activity",
     "dining": "Dining",
     "itinerary_generator": "Itinerary",
-    "summarizer": "Summarizer"
 }
 
 

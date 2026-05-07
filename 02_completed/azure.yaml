@@ -106,7 +106,7 @@ hooks:
 
         echo ""
         echo "═══════════════════════════════════════════════════════════════"
-        echo "� Loading data into Cosmos DB..."
+        echo "📥 Loading data into Cosmos DB..."
         echo "═══════════════════════════════════════════════════════════════"
         echo ""
 
@@ -127,7 +127,7 @@ hooks:
       run: |
         echo "
         COSMOSDB_ENDPOINT=""$env:COSMOSDB_ENDPOINT""
-        COSMOS_KEY=""$env:COSMOS_KEY""
+        COSMOSDB_KEY=""$env:COSMOSDB_KEY""
         COSMOS_DB_DATABASE_NAME=""TravelAssistant""
         AZURE_OPENAI_ENDPOINT=""$env:AZURE_OPENAI_ENDPOINT""
         AZURE_OPENAI_EMBEDDING_DEPLOYMENT=""$env:AZURE_OPENAI_EMBEDDINGDEPLOYMENTID""
@@ -143,7 +143,7 @@ hooks:
         # Create environment file for MCP server
         echo "
         COSMOSDB_ENDPOINT=""$env:COSMOSDB_ENDPOINT""
-        COSMOS_KEY=""$env:COSMOS_KEY""
+        COSMOSDB_KEY=""$env:COSMOSDB_KEY""
         COSMOS_DB_DATABASE_NAME=""TravelAssistant""
         AZURE_OPENAI_ENDPOINT=""$env:AZURE_OPENAI_ENDPOINT""
         AZURE_OPENAI_EMBEDDING_DEPLOYMENT=""$env:AZURE_OPENAI_EMBEDDINGDEPLOYMENTID""

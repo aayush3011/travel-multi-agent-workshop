@@ -323,7 +323,7 @@ async def call_hotel_agent(state: MessagesState, config) -> Command[Literal["hot
     
     # Patch active agent in database
     if local_interactive_mode:
-        patch_active_agent(tenant_id or "cli-test", user_id or "cli-test", thread_id, "hotel_agent")
+        patch_active_agent(tenant_id or "cli-test", user_id or "cli-test", thread_id, "hotel")
 
     # Add context about available parameters
     state["messages"].append(SystemMessage(
@@ -371,7 +371,7 @@ async def call_activity_agent(state: MessagesState, config) -> Command[Literal["
     
     # Patch active agent in database
     if local_interactive_mode:
-        patch_active_agent(tenant_id or "cli-test", user_id or "cli-test", thread_id, "activity_agent")
+        patch_active_agent(tenant_id or "cli-test", user_id or "cli-test", thread_id, "activity")
     
     # Add context about available parameters
     state["messages"].append(SystemMessage(
@@ -403,7 +403,7 @@ async def call_dining_agent(state: MessagesState, config) -> Command[Literal["di
     
     # Patch active agent in database
     if local_interactive_mode:
-        patch_active_agent(tenant_id or "cli-test", user_id or "cli-test", thread_id, "dining_agent")
+        patch_active_agent(tenant_id or "cli-test", user_id or "cli-test", thread_id, "dining")
     
     # Add context about available parameters
     state["messages"].append(SystemMessage(
@@ -435,7 +435,7 @@ async def call_itinerary_generator_agent(state: MessagesState, config) -> Comman
     
     # Patch active agent in database
     if local_interactive_mode:
-        patch_active_agent(tenant_id or "cli-test", user_id or "cli-test", thread_id, "itinerary_generator_agent")
+        patch_active_agent(tenant_id or "cli-test", user_id or "cli-test", thread_id, "itinerary_generator")
     
     # Add context about available parameters
     state["messages"].append(SystemMessage(

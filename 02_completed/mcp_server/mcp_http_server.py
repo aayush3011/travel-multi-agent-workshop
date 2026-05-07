@@ -7,8 +7,6 @@ from langsmith import traceable
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 
-from agent_memory_toolkit import MemoryRecord
-
 try:
     from src.app.services.agent_memory import get_memory_client
 except ImportError:  # pragma: no cover - supports alternate workshop package layout
@@ -209,27 +207,6 @@ def _memory_to_dict(memory: Any) -> Dict[str, Any]:
     if hasattr(memory, "model_dump"):
         return memory.model_dump()
     return dict(memory)
-
-
-def _add_memory_record(client: Any, record: MemoryRecord) -> str:
-    """Persist a MemoryRecord across toolkit API versions."""
-    import inspect
-
-    params = inspect.signature(client.add_cosmos).parameters
-    if "record_or_records" in params:
-        client.add_cosmos(record)
-        return record.id
-
-    return client.add_cosmos(
-        user_id=record.user_id,
-        role=record.role,
-        content=record.content,
-        memory_type=record.memory_type,
-        metadata=record.metadata,
-        thread_id=record.thread_id,
-        tags=record.tags,
-        embed=False,
-    )
 
 
 @mcp.tool()
@@ -819,40 +796,6 @@ def transfer_to_itinerary_generator(
 
 @mcp.tool()
 @traceable
-def transfer_to_summarizer(
-    reason: str
-) -> str:
-    """
-    Transfer conversation to the Summarizer agent.
-    
-    Use this when:
-    - User asks for a recap or summary of the conversation
-    - Conversation has become long (12+ turns)
-    - User wants to review what's been discussed or planned
-    
-    Examples:
-    - "Summarize our conversation"
-    - "What have we planned so far?"
-    - "Give me a recap"
-    
-    Args:
-        reason: Why you're transferring to this agent
-        
-    Returns:
-        JSON with goto field for routing
-    """
-    
-    logger.info(f"🔄 Transfer to Summarizer: {reason}")
-    
-    return json.dumps({
-        "goto": "summarizer",
-        "reason": reason,
-        "message": "Transferring to Summarizer to compress and recap our conversation."
-    })
-
-
-@mcp.tool()
-@traceable
 def transfer_to_orchestrator(
     reason: str
 ) -> str:
@@ -890,14 +833,14 @@ def transfer_to_orchestrator(
 # ============================================================================
 
 if __name__ == "__main__":
-    print("Starting Banking Tools MCP server...")
+    print("Starting Travel Assistant MCP server...")
 
     # Configure server options
     server_options = {
         "transport": "streamable-http"
     }
 
-    print("� Starting server without built-in authentication...")
+    print("🔓 Starting server without built-in authentication...")
     print("💡 For OAuth, use a reverse proxy like nginx or API gateway")
 
     try:
