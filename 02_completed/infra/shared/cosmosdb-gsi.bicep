@@ -4,8 +4,6 @@
 param databaseName string
 param sessionsContainerName string
 param messagesContainerName string
-param summariesContainerName string
-param memoriesContainerName string
 param apiEventsContainerName string
 param placesContainerName string
 param tripsContainerName string
@@ -141,81 +139,7 @@ resource cosmosContainerMessages 'Microsoft.DocumentDB/databaseAccounts/sqlDatab
   tags: tags
 }
 
-// Container 3: Summaries (vector + full-text search)
-resource cosmosContainerSummaries 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-12-01-preview' = {
-  parent: database
-  name: summariesContainerName
-  properties: {
-    resource: {
-      id: summariesContainerName
-      partitionKey: {
-        paths: [ '/tenantId', '/userId', '/sessionId' ]
-        kind: 'MultiHash'
-        version: 2
-      }
-      indexingPolicy: {
-        indexingMode: 'consistent'
-        automatic: true
-        includedPaths: [ { path: '/*' } ]
-        excludedPaths: [ { path: '/"_etag"/?' } ]
-        vectorIndexes: [ { path: '/embedding', type: 'diskANN' } ]
-        fullTextIndexes: [ { path: '/text', language: 'en-us' } ]
-      }
-      vectorEmbeddingPolicy: {
-        vectorEmbeddings: [ { path: '/embedding', dataType: 'float32', distanceFunction: 'cosine', dimensions: 1024 } ]
-      }
-      fullTextPolicy: {
-        defaultLanguage: 'en-US'
-        fullTextPaths: [ { path: '/text', language: 'en-US' } ]
-      }
-    }
-    options: {
-      autoscaleSettings: {
-        maxThroughput: 1000
-      }
-    }
-  }
-  tags: tags
-}
-
-// Container 4: Memories (vector + full-text search)
-resource cosmosContainerMemories 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-12-01-preview' = {
-  parent: database
-  name: memoriesContainerName
-  properties: {
-    resource: {
-      id: memoriesContainerName
-      partitionKey: {
-        paths: [ '/tenantId', '/userId', '/memoryId' ]
-        kind: 'MultiHash'
-        version: 2
-      }
-      indexingPolicy: {
-        indexingMode: 'consistent'
-        automatic: true
-        includedPaths: [ { path: '/*' } ]
-        excludedPaths: [ { path: '/"_etag"/?' } ]
-        vectorIndexes: [ { path: '/embedding', type: 'diskANN' } ]
-        fullTextIndexes: [ { path: '/text', language: 'en-us' } ]
-      }
-      vectorEmbeddingPolicy: {
-        vectorEmbeddings: [ { path: '/embedding', dataType: 'float32', distanceFunction: 'cosine', dimensions: 1024 } ]
-      }
-      fullTextPolicy: {
-        defaultLanguage: 'en-US'
-        fullTextPaths: [ { path: '/text', language: 'en-US' } ]
-      }
-    }
-    options: {
-      autoscaleSettings: {
-        maxThroughput: 1000
-      }
-    }
-  }
-  tags: tags
-}
-
-// Container 5: Places (vector + full-text search)
+// Container 3: Places (vector + full-text search)
 resource cosmosContainerPlaces 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-12-01-preview' = {
   parent: database
   name: placesContainerName
@@ -260,7 +184,7 @@ resource cosmosContainerPlaces 'Microsoft.DocumentDB/databaseAccounts/sqlDatabas
   tags: tags
 }
 
-// Container 6: Trips— dedicated throughput to force 10 physical partitions
+// Container 4: Trips— dedicated throughput to force 10 physical partitions
 resource cosmosContainerTrips 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-12-01-preview' = {
   parent: database
   name: tripsContainerName
@@ -292,7 +216,7 @@ resource cosmosContainerTrips 'Microsoft.DocumentDB/databaseAccounts/sqlDatabase
   tags: tags
 }
 
-// Container 6b: TripsByDestination — Global Secondary Index on Trips
+// Container 4b: TripsByDestination — Global Secondary Index on Trips
 resource cosmosContainerTripsByDestination 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-12-01-preview' = {
   parent: database
   name: tripsByDestinationContainerName
@@ -325,7 +249,7 @@ resource cosmosContainerTripsByDestination 'Microsoft.DocumentDB/databaseAccount
   tags: tags
 }
 
-// Container 7: Users
+// Container 5: Users
 resource cosmosContainerUsers 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-12-01-preview' = {
   parent: database
   name: usersContainerName
@@ -348,7 +272,7 @@ resource cosmosContainerUsers 'Microsoft.DocumentDB/databaseAccounts/sqlDatabase
   tags: tags
 }
 
-// Container 8: API Events
+// Container 6: API Events
 resource cosmosContainerApiEvents 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-12-01-preview' = {
   parent: database
   name: apiEventsContainerName
@@ -371,7 +295,7 @@ resource cosmosContainerApiEvents 'Microsoft.DocumentDB/databaseAccounts/sqlData
   tags: tags
 }
 
-// Container 9: Debug Logs
+// Container 7: Debug Logs
 resource cosmosContainerDebugLogs 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-12-01-preview' = {
   parent: database
   name: debugLogsContainerName
@@ -394,7 +318,7 @@ resource cosmosContainerDebugLogs 'Microsoft.DocumentDB/databaseAccounts/sqlData
   tags: tags
 }
 
-// Container 10: Checkpoints (LangGraph)
+// Container 8: Checkpoints (LangGraph)
 resource cosmosContainerCheckpoints 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-12-01-preview' = {
   parent: database
   name: checkpointsContainerName

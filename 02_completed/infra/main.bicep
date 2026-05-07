@@ -21,6 +21,9 @@ param owner string = 'defaultuser@example.com'
 @description('Deploy a provisioned-throughput Cosmos DB account with GSI instead of serverless')
 param deployGsi bool = false
 
+@description('Override the resource group name. Defaults to rg-<environmentName>.')
+param resourceGroupName string = ''
+
 var tags = {
   'azd-env-name': environmentName
   'owner': owner
@@ -30,7 +33,7 @@ var abbrs = loadJsonContent('./abbreviations.json')
 var resourceToken = toLower(uniqueString(subscription().id, environmentName, location))
 
 resource rg 'Microsoft.Resources/resourceGroups@2022-09-01' = {
-  name: 'rg-${environmentName}'
+  name: !empty(resourceGroupName) ? resourceGroupName : 'rg-${environmentName}'
   location: location
   tags: tags
 }
@@ -56,8 +59,6 @@ module cosmos './shared/cosmosdb.bicep' = if (!deployGsi) {
     databaseName: 'TravelAssistant'
     sessionsContainerName: 'Sessions'
     messagesContainerName: 'Messages'
-    summariesContainerName: 'Summaries'
-    memoriesContainerName: 'Memories'
     apiEventsContainerName: 'ApiEvents'
     placesContainerName: 'Places'
     tripsContainerName: 'Trips'
@@ -78,8 +79,6 @@ module cosmosGsi './shared/cosmosdb-gsi.bicep' = if (deployGsi) {
     databaseName: 'TravelAssistant'
     sessionsContainerName: 'Sessions'
     messagesContainerName: 'Messages'
-    summariesContainerName: 'Summaries'
-    memoriesContainerName: 'Memories'
     apiEventsContainerName: 'ApiEvents'
     placesContainerName: 'Places'
     tripsContainerName: 'Trips'
@@ -146,7 +145,7 @@ module AssignRoles './shared/assignroles.bicep' = if (!deployGsi) {
     openAIName: openAi.outputs.name
     identityName: managedIdentity.outputs.name
 	  userPrincipalId: !empty(principalId) ? principalId : null
-	servicePrincipalId: !empty(servicePrincipalId) ? servicePrincipalId : ''
+	  servicePrincipalId: !empty(servicePrincipalId) ? servicePrincipalId : ''
   }
   scope: rg
 }
@@ -158,7 +157,7 @@ module AssignRolesGsi './shared/assignroles.bicep' = if (deployGsi) {
     openAIName: openAi.outputs.name
     identityName: managedIdentity.outputs.name
 	  userPrincipalId: !empty(principalId) ? principalId : null
-	servicePrincipalId: !empty(servicePrincipalId) ? servicePrincipalId : ''
+	  servicePrincipalId: !empty(servicePrincipalId) ? servicePrincipalId : ''
   }
   scope: rg
 }

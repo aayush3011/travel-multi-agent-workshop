@@ -77,15 +77,21 @@ hooks:
         echo "═══════════════════════════════════════════════════════════════"
         echo ""
 
+        VENV_DIR=".venv-travel"
+
         # Check if virtual environment exists, create if not
-        if [ ! -d "venv" ]; then
-            echo "Creating Python virtual environment..."
-            python3 -m venv venv
+        if [ ! -d "$VENV_DIR" ]; then
+            echo "Creating Python virtual environment with python3.11..."
+            python3.11 -m venv "$VENV_DIR" 2>/dev/null || python3 -m venv "$VENV_DIR"
         fi
 
         # Activate virtual environment
         echo "Activating virtual environment..."
-        . venv/bin/activate
+        . "$VENV_DIR/bin/activate"
+
+        # Verify Python version
+        ACTIVE_PYTHON_VERSION=$(python --version 2>&1)
+        echo "Active Python version: $ACTIVE_PYTHON_VERSION"
 
         # Install requirements
         echo "Installing Python dependencies from requirements.txt..."
@@ -100,7 +106,7 @@ hooks:
 
         echo ""
         echo "═══════════════════════════════════════════════════════════════"
-        echo "� Loading data into Cosmos DB..."
+        echo "📥 Loading data into Cosmos DB..."
         echo "═══════════════════════════════════════════════════════════════"
         echo ""
 
@@ -132,7 +138,7 @@ hooks:
       run: |
         echo "
         COSMOSDB_ENDPOINT=""$env:COSMOSDB_ENDPOINT""
-        COSMOS_KEY=""$env:COSMOS_KEY""
+        COSMOSDB_KEY=""$env:COSMOSDB_KEY""
         COSMOS_DB_DATABASE_NAME=""TravelAssistant""
         AZURE_OPENAI_ENDPOINT=""$env:AZURE_OPENAI_ENDPOINT""
         AZURE_OPENAI_EMBEDDING_DEPLOYMENT=""$env:AZURE_OPENAI_EMBEDDINGDEPLOYMENTID""
@@ -148,7 +154,7 @@ hooks:
         # Create environment file for MCP server
         echo "
         COSMOSDB_ENDPOINT=""$env:COSMOSDB_ENDPOINT""
-        COSMOS_KEY=""$env:COSMOS_KEY""
+        COSMOSDB_KEY=""$env:COSMOSDB_KEY""
         COSMOS_DB_DATABASE_NAME=""TravelAssistant""
         AZURE_OPENAI_ENDPOINT=""$env:AZURE_OPENAI_ENDPOINT""
         AZURE_OPENAI_EMBEDDING_DEPLOYMENT=""$env:AZURE_OPENAI_EMBEDDINGDEPLOYMENTID""
@@ -166,48 +172,49 @@ hooks:
         Write-Host "═══════════════════════════════════════════════════════════════"
         Write-Host ""
 
-        # Check if virtual environment exists, create if not
-        if (-not (Test-Path "venv")) {
+        $venvDir = ".venv-travel"
+
+        if (-not (Test-Path $venvDir)) {
             Write-Host "Creating Python virtual environment..."
-            python -m venv venv
+            py -3.11 -m venv $venvDir 2>$null
+            if ($LASTEXITCODE -ne 0) {
+                py -3 -m venv $venvDir
+            }
         }
 
-        # Activate virtual environment
         Write-Host "Activating virtual environment..."
-        & ".\venv\Scripts\Activate.ps1"
+        & ".\$venvDir\Scripts\Activate.ps1"
 
-        # Install requirements
+        $activePythonVersion = python --version 2>&1
+        Write-Host "Active Python version: $activePythonVersion"
+
         Write-Host "Installing Python dependencies from requirements.txt..."
         if (Test-Path "requirements.txt") {
             python -m pip install --upgrade pip setuptools wheel
             python -m pip install --prefer-binary -r requirements.txt
-        } else {
-            Write-Host "⚠️  requirements.txt not found, installing basic dependencies..."
-            python -m pip install --upgrade pip setuptools wheel
-            python -m pip install azure-cosmos azure-identity openai python-dotenv
         }
 
         Write-Host ""
         Write-Host "═══════════════════════════════════════════════════════════════"
-        Write-Host "� Loading data into Cosmos DB..."
+        Write-Host "📊 Loading data into Cosmos DB..."
         Write-Host "═══════════════════════════════════════════════════════════════"
         Write-Host ""
 
-        Set-Location python
-        # Load data into Cosmos DB (from python directory)
-        python data\seed_data.py
-
-        # If GSI mode is enabled, seed 25K trips and manage throughput
-        if ($env:DEPLOY_GSI -eq "true") {
-          Write-Host ""
-          Write-Host "═══════════════════════════════════════════════════════════════"
-          Write-Host "🔧 GSI mode enabled — seeding 25K trips and scaling throughput..."
-          Write-Host "═══════════════════════════════════════════════════════════════"
-          Write-Host ""
-          python data\seed_gsi_trips.py
+        if (Test-Path "python\data\seed_data.py") {
+            Push-Location python
+            python data\seed_data.py
+        
+            # If GSI mode is enabled, seed 25K trips and manage throughput
+            if ($env:DEPLOY_GSI -eq "true") {
+                Write-Host ""
+                Write-Host "═══════════════════════════════════════════════════════════════"
+                Write-Host "🔧 GSI mode enabled — seeding 25K trips and scaling throughput..."
+                Write-Host "═══════════════════════════════════════════════════════════════"
+                Write-Host ""
+                python data\seed_gsi_trips.py
+            }
+            Pop-Location
         }
-
-        Set-Location ..
 
         Write-Host ""
         Write-Host "✅ Setup complete!"
