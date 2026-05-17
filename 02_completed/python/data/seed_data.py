@@ -610,8 +610,8 @@ def seed_memories():
     conversations through the live AgentMemoryToolkit pipeline.
 
     For each pre-seeded user we:
-      1. Insert ~10 ``turn`` records via ``add_turn``.
-      2. Call ``flush`` so the toolkit produces a thread ``summary`` plus
+      1. Insert ~10 ``turn`` records via ``add_cosmos``.
+      2. Call ``process_now`` so the toolkit produces a thread ``summary`` plus
          extracted ``fact`` records (with real embeddings).
       3. Call ``generate_user_summary`` so a cross-thread ``user_summary``
          exists for the user.
@@ -629,52 +629,57 @@ def seed_memories():
         print("   Skipping memory seed (toolkit not available).")
         return
 
-    try:
-        client = get_memory_client()
-    except Exception as exc:
-        print(f"   ⚠️  Failed to initialize toolkit memory client: {exc}")
-        print("   Skipping memory seed.")
-        return
-
-    seeded_users = 0
-    for user_id, conv in SEED_CONVERSATIONS.items():
-        thread_id = f"session_{uuid.uuid4().hex[:12]}"
-        turns = conv["turns"]
-        print(f"\n   👤 Seeding memories for {user_id} ({len(turns)} turns → {thread_id})")
-
+    async def _seed_async() -> int:
         try:
-            for role, content in turns:
-                client.add_cosmos(
-                    user_id=user_id,
-                    thread_id=thread_id,
-                    role=role,
-                    content=content,
-                    memory_type="turn",
+            client = await get_memory_client()
+        except Exception as exc:
+            print(f"   ⚠️  Failed to initialize toolkit memory client: {exc}")
+            print("   Skipping memory seed.")
+            return 0
+
+        seeded = 0
+        for user_id, conv in SEED_CONVERSATIONS.items():
+            thread_id = f"session_{uuid.uuid4().hex[:12]}"
+            turns = conv["turns"]
+            print(f"\n   👤 Seeding memories for {user_id} ({len(turns)} turns → {thread_id})")
+
+            try:
+                for role, content in turns:
+                    await client.add_cosmos(
+                        user_id=user_id,
+                        thread_id=thread_id,
+                        role=role,
+                        content=content,
+                        memory_type="turn",
+                    )
+                print(f"      ✅ Added {len(turns)} turn records")
+            except Exception as exc:
+                print(f"      ❌ add_turn failed for {user_id}: {exc}")
+                continue
+
+            try:
+                result = await client.process_now(user_id=user_id, thread_id=thread_id)
+                extracted = getattr(result, "extracted_counts", {}) or {}
+                print(
+                    "      ✅ Flushed pipeline (summary + facts): "
+                    f"facts={extracted.get('facts_count', 0)}, "
+                    f"deduped={getattr(result, 'deduplicated_count', 0)}"
                 )
-            print(f"      ✅ Added {len(turns)} turn records")
-        except Exception as exc:
-            print(f"      ❌ add_turn failed for {user_id}: {exc}")
-            continue
+            except Exception as exc:
+                print(f"      ❌ flush failed for {user_id}: {exc}")
+                continue
 
-        try:
-            result = client.process_now(user_id=user_id, thread_id=thread_id)
-            extracted = getattr(result, "extracted_counts", {}) or {}
-            print(
-                "      ✅ Flushed pipeline (summary + facts): "
-                f"facts={extracted.get('facts_count', 0)}, "
-                f"deduped={getattr(result, 'deduplicated_count', 0)}"
-            )
-        except Exception as exc:
-            print(f"      ❌ flush failed for {user_id}: {exc}")
-            continue
+            try:
+                await client.generate_user_summary(user_id=user_id)
+                print("      ✅ Generated user_summary")
+            except Exception as exc:
+                print(f"      ⚠️  generate_user_summary failed for {user_id}: {exc}")
 
-        try:
-            client.generate_user_summary(user_id=user_id)
-            print("      ✅ Generated user_summary")
-        except Exception as exc:
-            print(f"      ⚠️  generate_user_summary failed for {user_id}: {exc}")
+            seeded += 1
 
-        seeded_users += 1
+        return seeded
+
+    seeded_users = asyncio.run(_seed_async())
 
     print(f"\n   ✅ Seeded toolkit memories for {seeded_users}/{len(SEED_CONVERSATIONS)} users")
     print("   ℹ️  peter and bruce intentionally left empty for workshop exercises")

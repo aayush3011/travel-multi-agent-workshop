@@ -1,22 +1,21 @@
-"""Singleton wrapper around agent_memory_toolkit.CosmosMemoryClient.
+"""Async singleton wrapper around agent_memory_toolkit.aio.AsyncCosmosMemoryClient.
 
 All workshop memory access (MCP, REST, agents) flows through `get_memory_client()`.
 """
 
 from __future__ import annotations
 
+import asyncio
 import os
-import threading
-from typing import Optional
 
 from dotenv import load_dotenv
 
-from agent_memory_toolkit import CosmosMemoryClient
+from agent_memory_toolkit.aio import AsyncCosmosMemoryClient
 
 load_dotenv(override=False)
 
-_client: Optional[CosmosMemoryClient] = None
-_client_lock = threading.Lock()
+_client: AsyncCosmosMemoryClient | None = None
+_init_lock = asyncio.Lock()
 
 
 def _get_required_env(name: str) -> str:
@@ -26,7 +25,7 @@ def _get_required_env(name: str) -> str:
     return value
 
 
-def _create_memory_client() -> CosmosMemoryClient:
+async def _create_memory_client() -> AsyncCosmosMemoryClient:
     cosmos_endpoint = _get_required_env("COSMOSDB_ENDPOINT")
     cosmos_database = (
         os.environ.get("COSMOSDB_DATABASE_NAME")
@@ -38,7 +37,7 @@ def _create_memory_client() -> CosmosMemoryClient:
         os.environ.get("AZURE_OPENAI_CHAT_DEPLOYMENT")
         or os.environ.get("AZURE_OPENAI_DEPLOYMENT")
         or os.environ.get("OPENAI_CHAT_DEPLOYMENT_NAME")
-        or "gpt-4o"
+        or "gpt-4o-mini"
     )
     embedding_deployment = (
         os.environ.get("AZURE_OPENAI_EMBEDDING_DEPLOYMENT")
@@ -56,20 +55,20 @@ def _create_memory_client() -> CosmosMemoryClient:
     if cosmos_key:
         client_kwargs["cosmos_key"] = cosmos_key
 
-    client = CosmosMemoryClient(**client_kwargs)
-    client.connect_cosmos(endpoint=cosmos_endpoint)
+    client = AsyncCosmosMemoryClient(**client_kwargs)
+    await client.connect_cosmos(endpoint=cosmos_endpoint)
     return client
 
 
-def get_memory_client() -> CosmosMemoryClient:
+async def get_memory_client() -> AsyncCosmosMemoryClient:
     """Return the process-wide connected Cosmos memory client."""
     global _client
 
     if _client is None:
-        with _client_lock:
+        async with _init_lock:
             if _client is None:
                 try:
-                    _client = _create_memory_client()
+                    _client = await _create_memory_client()
                 except Exception as exc:  # noqa: BLE001
                     raise RuntimeError(
                         f"agent_memory_toolkit failed to connect: {exc}"

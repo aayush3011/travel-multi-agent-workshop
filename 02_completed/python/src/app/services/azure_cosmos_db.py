@@ -416,7 +416,8 @@ def query_places_hybrid(
     dietary: Optional[List[str]] = None,
     accessibility: Optional[List[str]] = None,
     price_tier: Optional[str] = None,
-    limit: int = 5
+    limit: int = 5,
+    user_preference_vector: list[float] | None = None
 ) -> List[Dict[str, Any]]:
     """Query places with filters including array-based filters (dietary, accessibility, tags)"""
     logger.info(f"🔍 ========== QUERY_PLACES CALLED ==========")
@@ -476,6 +477,9 @@ def query_places_hybrid(
     
     # Always include VectorDistance
     fulltext_clauses.append("VectorDistance(c.embedding, @embedding)")
+    if user_preference_vector is not None:
+        fulltext_clauses.append("VectorDistance(c.embedding, @pref_vector)")
+        params.append({"name": "@pref_vector", "value": user_preference_vector})
     
     rrf_clause = ", ".join(fulltext_clauses)
     

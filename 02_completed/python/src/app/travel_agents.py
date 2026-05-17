@@ -1,35 +1,35 @@
+from __future__ import annotations
+
+import asyncio
+import inspect
+import json
 import logging
 import os
 import sys
 import uuid
-import asyncio
-import json
-from typing import Literal
-from datetime import datetime, UTC
+from contextvars import ContextVar
+from typing import Any, Literal
+
+from dotenv import load_dotenv
 
 # Add the project root to Python path to enable imports
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from dotenv import load_dotenv
 load_dotenv(override=False)
 
-from langchain_core.messages import ToolMessage, SystemMessage, AIMessage
+from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.runnables import RunnableConfig
+from langchain_core.tools import tool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.tools import load_mcp_tools
-from langgraph.graph import StateGraph, START, MessagesState
 from langgraph.prebuilt import create_react_agent
-from langgraph.types import Command, interrupt
-from langsmith import traceable
 from langgraph_checkpoint_cosmosdb import CosmosDBSaver
+from pydantic import BaseModel, Field
 
 from src.app.services.azure_open_ai import model
-from src.app.services.azure_cosmos_db import (
-    DATABASE_NAME, checkpoint_container,
-    sessions_container, patch_active_agent,
-    update_session_container
-)
+from src.app.services.azure_cosmos_db import DATABASE_NAME, checkpoint_container
 
 # Setup logging - reduce clutter by setting specific loggers to WARNING
 logging.basicConfig(level=logging.INFO)
@@ -42,15 +42,18 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("mcp").setLevel(logging.WARNING)
 logging.getLogger("azure.cosmos").setLevel(logging.WARNING)
 
-# Local interactive mode flag
-local_interactive_mode = False
-
 # Prompt directory
-PROMPT_DIR = os.path.join(os.path.dirname(__file__), 'prompts')
+PROMPT_DIR = os.path.join(os.path.dirname(__file__), "prompts")
+
+# Runtime context used to pass large preference vectors into the place-search MCP
+# tool without putting up to 1536 floats into chat history or model-visible text.
+_current_user_preference_vector: ContextVar[list[float] | None] = ContextVar(
+    "current_user_preference_vector", default=None
+)
 
 
 def load_prompt(agent_name: str) -> str:
-    """Load prompt from .prompty file"""
+    """Load prompt from .prompty file."""
     file_path = os.path.join(PROMPT_DIR, f"{agent_name}.prompty")
     logger.info(f"Loading prompt for {agent_name} from {file_path}")
     try:
@@ -61,186 +64,423 @@ def load_prompt(agent_name: str) -> str:
         return f"You are a {agent_name} agent in a travel planning system."
 
 
-def filter_tools_by_prefix(tools, prefixes):
-    """Filter tools by name prefix"""
-    return [tool for tool in tools if any(tool.name.startswith(prefix) for prefix in prefixes)]
+SUPERVISOR_BASE_PROMPT = load_prompt("supervisor")
 
+
+def filter_tools_by_prefix(tools: list[Any], prefixes: list[str]) -> list[Any]:
+    """Filter tools by name prefix."""
+    return [
+        mcp_tool
+        for mcp_tool in tools
+        if any(getattr(mcp_tool, "name", "").startswith(prefix) for prefix in prefixes)
+    ]
+
+
+def _tool_names(tools: list[Any]) -> list[str]:
+    return [getattr(mcp_tool, "name", "<unnamed>") for mcp_tool in tools]
+
+
+def _bind_parallel_tool_calls(base_model: Any) -> Any:
+    """Return a model binding that asks OpenAI-compatible models to parallelize tool calls."""
+    bind = getattr(base_model, "bind", None)
+    if callable(bind):
+        try:
+            return bind(parallel_tool_calls=True)
+        except TypeError as exc:
+            logger.warning(
+                "Model binding does not accept parallel_tool_calls; continuing without it: %s",
+                exc,
+            )
+    return base_model
+
+
+def _create_agent(agent_model: Any, tools: list[Any], prompt_text: str, **kwargs: Any) -> Any:
+    """Create a ReAct agent across LangGraph versions that renamed the prompt kwarg."""
+    signature = inspect.signature(create_react_agent)
+    prompt_kwarg = "state_modifier" if "state_modifier" in signature.parameters else "prompt"
+    return create_react_agent(agent_model, tools, **{prompt_kwarg: prompt_text}, **kwargs)
+
+
+def _create_checkpointer() -> CosmosDBSaver:
+    """Create the Cosmos DB checkpointer using the installed package signature."""
+    try:
+        return CosmosDBSaver(database_name=DATABASE_NAME, container_name=checkpoint_container)
+    except TypeError:
+        return CosmosDBSaver(container=checkpoint_container)
+
+
+def _looks_like_vector(value: Any) -> bool:
+    return isinstance(value, list) and all(isinstance(item, (int, float)) for item in value)
+
+
+def _extract_user_preference_vector(
+    explicit_vector: list[float] | None,
+    config: RunnableConfig,
+) -> list[float] | None:
+    """Find a preference embedding supplied either as a tool arg or runtime config."""
+    if _looks_like_vector(explicit_vector):
+        return explicit_vector
+
+    configurable = config.get("configurable", {}) if config else {}
+    metadata = config.get("metadata", {}) if config else {}
+
+    candidates = [
+        configurable.get("user_preference_vector"),
+        configurable.get("preference_vector"),
+        metadata.get("user_preference_vector"),
+        metadata.get("preference_vector"),
+    ]
+
+    for summary_key in ("user_summary", "userSummary"):
+        for source in (configurable, metadata):
+            summary = source.get(summary_key)
+            if isinstance(summary, dict):
+                candidates.extend(
+                    [
+                        summary.get("embedding"),
+                        summary.get("user_preference_vector"),
+                        summary.get("preference_vector"),
+                    ]
+                )
+
+    for candidate in candidates:
+        if _looks_like_vector(candidate):
+            return candidate
+    return None
+
+
+def _wrap_discover_places_tool(mcp_tool: Any) -> Any:
+    """Inject the request-scoped preference vector into discover_places MCP calls."""
+    description = getattr(mcp_tool, "description", None) or "Discover places."
+    args_schema = getattr(mcp_tool, "args_schema", None)
+
+    async def discover_places_with_preference_context(
+        config: RunnableConfig,
+        **kwargs: Any,
+    ) -> Any:
+        vector = _current_user_preference_vector.get()
+        if vector is not None and not _looks_like_vector(kwargs.get("user_preference_vector")):
+            kwargs["user_preference_vector"] = vector
+        return await mcp_tool.ainvoke(kwargs, config=config)
+
+    discover_places_with_preference_context.__name__ = getattr(
+        mcp_tool, "name", "discover_places"
+    )
+    discover_places_with_preference_context.__doc__ = description
+
+    return tool(
+        getattr(mcp_tool, "name", "discover_places"),
+        args_schema=args_schema,
+        description=description,
+    )(discover_places_with_preference_context)
+
+
+def _with_preference_vector_injection(tools: list[Any]) -> list[Any]:
+    wrapped_tools: list[Any] = []
+    for mcp_tool in tools:
+        if getattr(mcp_tool, "name", "").startswith("discover_places"):
+            wrapped_tools.append(_wrap_discover_places_tool(mcp_tool))
+        else:
+            wrapped_tools.append(mcp_tool)
+    return wrapped_tools
+
+
+def _last_message_content(result: Any) -> str:
+    """Return compact text from the last message produced by a sub-agent."""
+    if isinstance(result, dict) and result.get("messages"):
+        content = getattr(result["messages"][-1], "content", None)
+        if content is not None:
+            return str(content)
+    return str(result)
+
+
+def _subagent_config(config: RunnableConfig, agent_name: str) -> RunnableConfig:
+    """Preserve request configuration while tagging internal sub-agent calls."""
+    inherited = dict(config or {})
+    configurable = dict(inherited.get("configurable", {}) or {})
+    metadata = dict(inherited.get("metadata", {}) or {})
+    metadata["sub_agent"] = agent_name
+    inherited["configurable"] = configurable
+    inherited["metadata"] = metadata
+    return inherited
+
+
+class FindPlacesInput(BaseModel):
+    city: str = Field(..., description="City to search")
+    aspects: list[Literal["hotel", "activity", "dining"]] = Field(
+        ...,
+        description=(
+            "Which categories of places to search; pass all needed aspects at once "
+            "for parallel fan-out"
+        ),
+    )
+    constraints: dict[str, Any] | None = Field(
+        default=None,
+        description="Optional constraints, e.g., {'dietary':'vegan','budget':'moderate'}",
+    )
+    user_preference_vector: list[float] | None = Field(
+        default=None,
+        description=(
+            "Optional preference embedding for personalized RRF; usually injected by "
+            "runtime config rather than model-visible text"
+        ),
+    )
+
+
+class ItineraryInput(BaseModel):
+    trip_id: str | None = Field(
+        default=None,
+        description="Existing trip id to update; omit or null to create a new trip",
+    )
+    destination: str | None = Field(
+        default=None,
+        description="Destination city or region for the itinerary",
+    )
+    days: list[dict[str, Any]] | str | None = Field(
+        default=None,
+        description="Requested day plans, duration, or structured day-by-day content",
+    )
+    selected_places: dict[str, Any] | list[dict[str, Any]] | str | None = Field(
+        default=None,
+        description="Selected hotel, activity, and dining options to arrange",
+    )
+    constraints: dict[str, Any] | None = Field(
+        default=None,
+        description="Traveller constraints and planning preferences",
+    )
+    dates: dict[str, Any] | str | None = Field(
+        default=None,
+        description="Optional trip dates or date range",
+    )
+    notes: str | None = Field(
+        default=None,
+        description="Additional update instructions or planning notes",
+    )
 
 
 # Global variables for MCP session management
-_mcp_client = None
-_session_context = None
-_persistent_session = None
+_mcp_client: MultiServerMCPClient | None = None
+_session_context: Any | None = None
+_persistent_session: Any | None = None
+
+# MCP tool subsets loaded once during startup
+_mcp_session_tools: list[Any] = []
+_mcp_find_places_tools: list[Any] = []
+_mcp_itinerary_tools: list[Any] = []
 
 # Global agent variables
-orchestrator_agent = None
-hotel_agent = None
-activity_agent = None
-dining_agent = None
-itinerary_generator_agent = None
+_find_places_agent: Any | None = None
+_itinerary_agent: Any | None = None
+supervisor_agent: Any | None = None
+
+
+@tool("find_places", args_schema=FindPlacesInput)
+async def find_places_tool(
+    city: str,
+    aspects: list[Literal["hotel", "activity", "dining"]],
+    constraints: dict[str, Any] | None = None,
+    user_preference_vector: list[float] | None = None,
+    config: RunnableConfig = None,
+) -> str:
+    """Search hotels, activities, or dining in a city. Pass all needed aspects in one call for parallel fan-out."""
+    if _find_places_agent is None:
+        raise RuntimeError("Travel agents have not been initialized")
+
+    effective_config = config or {"configurable": {}, "metadata": {}}
+    vector = _extract_user_preference_vector(user_preference_vector, effective_config)
+    constraints_payload = constraints or {}
+    user_msg = (
+        f"city={city!r} aspects={aspects!r} constraints={constraints_payload!r} "
+        f"user_preference_vector={'runtime-injected' if vector else 'absent'}. "
+        "If a preference vector is runtime-injected, omit it from tool-call JSON; "
+        "the discover_places tool wrapper will attach it without exposing the vector."
+    )
+    state = {"messages": [HumanMessage(content=user_msg)]}
+
+    token = _current_user_preference_vector.set(vector)
+    try:
+        result = await _find_places_agent.ainvoke(
+            state,
+            config=_subagent_config(effective_config, "find_places"),
+        )
+        return _last_message_content(result)
+    finally:
+        _current_user_preference_vector.reset(token)
+
+
+@tool("create_or_update_itinerary", args_schema=ItineraryInput)
+async def create_or_update_itinerary_tool(
+    trip_id: str | None = None,
+    destination: str | None = None,
+    days: list[dict[str, Any]] | str | None = None,
+    selected_places: dict[str, Any] | list[dict[str, Any]] | str | None = None,
+    constraints: dict[str, Any] | None = None,
+    dates: dict[str, Any] | str | None = None,
+    notes: str | None = None,
+    config: RunnableConfig = None,
+) -> str:
+    """Create a new saved itinerary or update an existing trip plan."""
+    if _itinerary_agent is None:
+        raise RuntimeError("Travel agents have not been initialized")
+
+    payload = {
+        "trip_id": trip_id,
+        "destination": destination,
+        "days": days,
+        "selected_places": selected_places,
+        "constraints": constraints,
+        "dates": dates,
+        "notes": notes,
+    }
+    compact_payload = {key: value for key, value in payload.items() if value is not None}
+    user_msg = (
+        "Create or update the itinerary using this structured request. "
+        "Persist changes with the trip tools before reporting success.\n"
+        f"{json.dumps(compact_payload, ensure_ascii=False, default=str)}"
+    )
+    state = {"messages": [HumanMessage(content=user_msg)]}
+    effective_config = config or {"configurable": {}, "metadata": {}}
+    result = await _itinerary_agent.ainvoke(
+        state,
+        config=_subagent_config(effective_config, "itinerary"),
+    )
+    return _last_message_content(result)
 
 
 async def setup_agents():
     """
-    Initialize all agents with their respective MCP tools.
-    This creates a persistent MCP session and loads domain-aware tools.
-    
-    Agent Structure:
-    - Orchestrator: Entry point, routes to specialized agents
-    - Hotel Agent: Searches accommodations, stores hotel preferences
-    - Activity Agent: Searches attractions, stores activity preferences  
-    - Dining Agent: Searches restaurants, stores dining preferences
-    - Itinerary Generator: Synthesizes all results into day-by-day plan
+    Initialize the supervisor and internal sub-agents with their MCP tools.
+
+    This creates one persistent MCP session for the process. The topology is:
+    user -> supervisor ReAct agent -> find_places or create_or_update_itinerary tools,
+    where each tool invokes an internal ReAct sub-agent.
     """
-    global orchestrator_agent, hotel_agent, activity_agent, dining_agent
-    global itinerary_generator_agent
     global _mcp_client, _session_context, _persistent_session
-    
+    global _mcp_session_tools, _mcp_find_places_tools, _mcp_itinerary_tools
+    global _find_places_agent, _itinerary_agent, supervisor_agent
+
+    if supervisor_agent is not None:
+        logger.info("✅ Travel agents already initialized")
+        return
+
     logger.info("🚀 Starting Travel Assistant MCP client...")
-    
+
     # Load authentication configuration
     try:
         simple_token = os.getenv("MCP_AUTH_TOKEN")
         github_client_id = os.getenv("GITHUB_CLIENT_ID")
         github_client_secret = os.getenv("GITHUB_CLIENT_SECRET")
-        
+
         logger.info("🔐 Client Authentication Configuration:")
         logger.info(f"   Simple Token: {'SET' if simple_token else 'NOT SET'}")
-        logger.info(f"   GitHub OAuth: {'SET' if github_client_id and github_client_secret else 'NOT SET'}")
-        
-        # Determine authentication mode
+        logger.info(
+            f"   GitHub OAuth: {'SET' if github_client_id and github_client_secret else 'NOT SET'}"
+        )
+
         if github_client_id and github_client_secret:
             auth_mode = "github_oauth"
             logger.info("   Mode: GitHub OAuth (Production)")
         elif simple_token:
-            auth_mode = "simple_token" 
-            logger.info(f"   Mode: Simple Token (Development)")
+            auth_mode = "simple_token"
+            logger.info("   Mode: Simple Token (Development)")
         else:
             auth_mode = "none"
             logger.info("   Mode: No Authentication")
-            
+
     except ImportError:
         auth_mode = "none"
         simple_token = None
         logger.info("🔐 Client Authentication: Dependencies unavailable - no auth")
-    
+
     logger.info("   - Transport: streamable_http")
     logger.info(f"   - Server URL: {os.getenv('MCP_SERVER_BASE_URL', 'http://localhost:8080')}/mcp/")
     logger.info(f"   - Authentication: {auth_mode.upper()}")
     logger.info("   - Status: Ready to connect\n")
-    
+
     # MCP Client configuration
-    client_config = {
+    client_config: dict[str, Any] = {
         "travel_tools": {
             "transport": "streamable_http",
             "url": os.getenv("MCP_SERVER_BASE_URL", "http://localhost:8080") + "/mcp/",
         }
     }
-    
+
     # Add authentication if configured
     if auth_mode == "simple_token" and simple_token:
-        client_config["travel_tools"]["headers"] = {
-            "Authorization": f"Bearer {simple_token}"
-        }
+        client_config["travel_tools"]["headers"] = {"Authorization": f"Bearer {simple_token}"}
         logger.info("🔐 Added Bearer token authentication to client")
     elif auth_mode == "github_oauth":
         client_config["travel_tools"]["auth"] = "oauth"
         logger.info("🔐 Enabled OAuth authentication for client")
-    
+
     _mcp_client = MultiServerMCPClient(client_config)
     logger.info("✅ MCP Client initialized successfully")
-    
+
     # Create persistent session
     _session_context = _mcp_client.session("travel_tools")
     _persistent_session = await _session_context.__aenter__()
-    
-    # Load all MCP tools
+
+    # Load all MCP tools once for this persistent session
     all_tools = await load_mcp_tools(_persistent_session)
-    
+
     logger.info("[DEBUG] All tools registered from Travel Assistant MCP server:")
-    for tool in all_tools:
-        logger.info(f"  - {tool.name}")
-    
-    # ========================================================================
-    # Tool Distribution for Specialized Agents
-    # ========================================================================
-    
-    # Orchestrator: Session management + memory tools + all transfer tools
-    orchestrator_tools = filter_tools_by_prefix(all_tools, [
-        "create_session", "get_session_context", "append_turn",
-        "add_turn", "recall_memories", "get_user_summary",
-        "transfer_to_"  # All transfer tools
-    ])
+    for mcp_tool in all_tools:
+        logger.info(f"  - {mcp_tool.name}")
 
-    hotel_tools = filter_tools_by_prefix(all_tools, [
-        "discover_places",  # Search hotels
-        "add_turn", "recall_memories", "get_user_summary",
-        "transfer_to_orchestrator", "transfer_to_itinerary_generator"
-    ])
+    _mcp_session_tools = filter_tools_by_prefix(
+        all_tools,
+        ["create_session", "get_session_context", "append_turn", "add_turn"],
+    )
+    _mcp_find_places_tools = _with_preference_vector_injection(
+        filter_tools_by_prefix(
+            all_tools,
+            ["discover_places", "add_turn", "recall_memories", "get_user_summary"],
+        )
+    )
+    _mcp_itinerary_tools = filter_tools_by_prefix(
+        all_tools,
+        [
+            "create_new_trip",
+            "update_trip",
+            "get_trip_details",
+            "add_turn",
+            "recall_memories",
+            "get_user_summary",
+        ],
+    )
 
-    activity_tools = filter_tools_by_prefix(all_tools, [
-        "discover_places",  # Search attractions
-        "add_turn", "recall_memories", "get_user_summary",
-        "transfer_to_orchestrator", "transfer_to_itinerary_generator"
-    ])
+    logger.info("\n📊 Tool Distribution (Supervisor + 2 Sub-Agents):")
+    logger.info(f"   Supervisor session tools: {len(_mcp_session_tools)} {_tool_names(_mcp_session_tools)}")
+    logger.info(f"   Find Places tools: {len(_mcp_find_places_tools)} {_tool_names(_mcp_find_places_tools)}")
+    logger.info(f"   Itinerary tools: {len(_mcp_itinerary_tools)} {_tool_names(_mcp_itinerary_tools)}")
 
-    dining_tools = filter_tools_by_prefix(all_tools, [
-        "discover_places",  # Search restaurants
-        "add_turn", "recall_memories", "get_user_summary",
-        "transfer_to_orchestrator", "transfer_to_itinerary_generator"
-    ])
+    _find_places_agent = _create_agent(
+        _bind_parallel_tool_calls(model),
+        _mcp_find_places_tools,
+        load_prompt("find_places"),
+    )
 
-    itinerary_generator_tools = filter_tools_by_prefix(all_tools, [
-        "create_new_trip", "update_trip", "get_trip_details",
-        "add_turn", "recall_memories", "get_user_summary",
-        "transfer_to_orchestrator"
-    ])
-    
-    logger.info(f"\n📊 Tool Distribution (4 Specialized Agents):")
-    logger.info(f"   Orchestrator: {len(orchestrator_tools)} tools")
-    logger.info(f"   Hotel Agent: {len(hotel_tools)} tools")
-    logger.info(f"   Activity Agent: {len(activity_tools)} tools")
-    logger.info(f"   Dining Agent: {len(dining_tools)} tools")
-    logger.info(f"   Itinerary Generator: {len(itinerary_generator_tools)} tools")
-    
-    # Create agents with their tools
-    orchestrator_agent = create_react_agent(
-        model, 
-        orchestrator_tools, 
-        state_modifier=load_prompt("orchestrator")
-    )
-    
-    hotel_agent = create_react_agent(
+    _itinerary_agent = _create_agent(
         model,
-        hotel_tools,
-        state_modifier=load_prompt("hotel_agent")
+        _mcp_itinerary_tools,
+        load_prompt("itinerary_agent"),
     )
-    
-    activity_agent = create_react_agent(
-        model,
-        activity_tools,
-        state_modifier=load_prompt("activity_agent")
+
+    supervisor_agent = _create_agent(
+        _bind_parallel_tool_calls(model),
+        tools=[find_places_tool, create_or_update_itinerary_tool, *_mcp_session_tools],
+        prompt_text=SUPERVISOR_BASE_PROMPT,
+        checkpointer=_create_checkpointer(),
     )
-    
-    dining_agent = create_react_agent(
-        model,
-        dining_tools,
-        state_modifier=load_prompt("dining_agent")
-    )
-    
-    itinerary_generator_agent = create_react_agent(
-        model,
-        itinerary_generator_tools,
-        state_modifier=load_prompt("itinerary_generator")
-    )
-    
-    logger.info("✅ All agents created successfully\n")
+
+    logger.info("✅ Supervisor and sub-agents created successfully\n")
 
 
 async def cleanup_persistent_session():
-    """Clean up the persistent MCP session when the application shuts down"""
-    global _session_context, _persistent_session
-    
+    """Clean up the persistent MCP session when the application shuts down."""
+    global _session_context, _persistent_session, supervisor_agent
+    global _find_places_agent, _itinerary_agent
+
     if _session_context is not None and _persistent_session is not None:
         try:
             await _session_context.__aexit__(None, None, None)
@@ -248,371 +488,19 @@ async def cleanup_persistent_session():
         except Exception as e:
             logger.error(f"Error cleaning up MCP session: {e}")
 
+    _session_context = None
+    _persistent_session = None
+    supervisor_agent = None
+    _find_places_agent = None
+    _itinerary_agent = None
 
-# ============================================================================
-# Helper: Store Message in Database at Every Turn
-# ============================================================================
-
-# ============================================================================
-# Agent Node Functions
-# ============================================================================
-
-@traceable(run_type="llm")
-async def call_orchestrator_agent(state: MessagesState, config) -> Command[Literal["orchestrator", "hotel", "activity", "dining", "itinerary_generator", "human"]]:
-    """
-    Orchestrator agent: Routes requests using transfer_to_ tools.
-    Checks for active agent and routes directly if found.
-    Stores every message in database.
-    """
-    thread_id = config["configurable"].get("thread_id", "UNKNOWN_THREAD_ID")
-    user_id = config["configurable"].get("userId", "UNKNOWN_USER_ID")
-    tenant_id = config["configurable"].get("tenantId", "UNKNOWN_TENANT_ID")
-    
-    logger.info(f"🎯 Calling orchestrator agent with Thread: {thread_id}, User: {user_id}, Tenant: {tenant_id}")
-    
-    # Add context about available parameters
-    state["messages"].append(SystemMessage(
-        content=f"If tool to be called requires tenantId='{tenant_id}', userId='{user_id}', session_id='{thread_id}', thread_id='{thread_id}', include these in the JSON parameters when invoking the tool. Do not ask the user for them."
-    ))
-    
-    # Check for active agent in database
-    try:
-        logging.info(f"Looking up active agent for thread {thread_id}")
-        session_doc = sessions_container.read_item(
-            item=thread_id,
-            partition_key=[tenant_id, user_id, thread_id]
-        )
-        activeAgent = session_doc.get('activeAgent', 'unknown')
-    except Exception as e:
-        logger.debug(f"No active agent found: {e}")
-        activeAgent = None
-    
-    # Initialize session if needed (for local testing)
-    if activeAgent is None:
-        update_session_container({
-            "id": thread_id,
-            "sessionId": thread_id,
-            "tenantId": tenant_id,
-            "userId": user_id,
-            "title": "New Conversation",
-            "createdAt": datetime.now(UTC).isoformat(),
-            "lastActivityAt": datetime.now(UTC).isoformat(),
-            "status": "active",
-            "messageCount": 0
-        })
-    
-    logger.info(f"Active agent from DB: {activeAgent}")
-    
-    # Always call orchestrator to analyze the message and decide routing
-    # Don't blindly route to the last active agent - user's request may have changed
-    response = await orchestrator_agent.ainvoke(state, config)
-    
-    return Command(update=response, goto="human")
-
-
-@traceable(run_type="llm")
-async def call_hotel_agent(state: MessagesState, config) -> Command[Literal["hotel", "itinerary_generator", "orchestrator", "human"]]:
-    """
-    Hotel Agent: Searches accommodations and stores hotel preferences.
-    """
-    thread_id = config["configurable"].get("thread_id", "UNKNOWN_THREAD_ID")
-    user_id = config["configurable"].get("userId", "UNKNOWN_USER_ID")
-    tenant_id = config["configurable"].get("tenantId", "UNKNOWN_TENANT_ID")
-    
-    logger.info("🏨 ========== HOTEL AGENT CALLED ==========")
-    
-    # Patch active agent in database
-    if local_interactive_mode:
-        patch_active_agent(tenant_id or "cli-test", user_id or "cli-test", thread_id, "hotel")
-
-    # Add context about available parameters
-    state["messages"].append(SystemMessage(
-        content=f"If tool to be called requires tenantId='{tenant_id}', userId='{user_id}', session_id='{thread_id}', thread_id='{thread_id}', include these in the JSON parameters when invoking the tool. Do not ask the user for them."
-    ))
-    
-    logger.info(f"🏨 Invoking hotel_agent...")
-    response = await hotel_agent.ainvoke(state, config)
-    logger.info(f"🏨 hotel_agent.ainvoke completed")
-    
-    # Log tool calls if any
-    if isinstance(response, dict) and "messages" in response:
-        tool_calls = [msg for msg in response["messages"] if isinstance(msg, ToolMessage)]
-        if tool_calls:
-            logger.info(f"🔧 Hotel Agent made {len(tool_calls)} tool calls")
-            for tc in tool_calls:
-                logger.info(f"🔧 Tool: {tc.name if hasattr(tc, 'name') else 'unknown'}")
-        else:
-            logger.warning(f"⚠️  Hotel Agent made NO tool calls!")
-        
-        ai_messages = [msg for msg in response["messages"] if isinstance(msg, AIMessage) and msg.content]
-        if ai_messages:
-            logger.info(f"💬 Hotel Agent response: {ai_messages[-1].content[:200]}...")
-        
-        # Remove system message
-        response["messages"] = [
-            msg for msg in response["messages"]
-            if not isinstance(msg, SystemMessage)
-        ]
-    
-    logger.info(f"🏨 ========== HOTEL AGENT COMPLETED ==========")
-    return Command(update=response, goto="human")
-
-
-@traceable(run_type="llm")
-async def call_activity_agent(state: MessagesState, config) -> Command[Literal["activity", "itinerary_generator", "orchestrator", "human"]]:
-    """
-    Activity Agent: Searches attractions and stores activity preferences.
-    """
-    thread_id = config["configurable"].get("thread_id", "UNKNOWN_THREAD_ID")
-    user_id = config["configurable"].get("userId", "UNKNOWN_USER_ID")
-    tenant_id = config["configurable"].get("tenantId", "UNKNOWN_TENANT_ID")
-    
-    logger.info("🎭 Activity Agent searching attractions...")
-    
-    # Patch active agent in database
-    if local_interactive_mode:
-        patch_active_agent(tenant_id or "cli-test", user_id or "cli-test", thread_id, "activity")
-    
-    # Add context about available parameters
-    state["messages"].append(SystemMessage(
-        content=f"If tool to be called requires tenantId='{tenant_id}', userId='{user_id}', session_id='{thread_id}', thread_id='{thread_id}', include these in the JSON parameters when invoking the tool. Do not ask the user for them."
-    ))
-    
-    response = await activity_agent.ainvoke(state, config)
-    
-    # Remove system message
-    if isinstance(response, dict) and "messages" in response:
-        response["messages"] = [
-            msg for msg in response["messages"]
-            if not isinstance(msg, SystemMessage)
-        ]
-    
-    return Command(update=response, goto="human")
-
-
-@traceable(run_type="llm")
-async def call_dining_agent(state: MessagesState, config) -> Command[Literal["dining", "itinerary_generator", "orchestrator", "human"]]:
-    """
-    Dining Agent: Searches restaurants and stores dining preferences.
-    """
-    thread_id = config["configurable"].get("thread_id", "UNKNOWN_THREAD_ID")
-    user_id = config["configurable"].get("userId", "UNKNOWN_USER_ID")
-    tenant_id = config["configurable"].get("tenantId", "UNKNOWN_TENANT_ID")
-    
-    logger.info("🍽️  Dining Agent searching restaurants...")
-    
-    # Patch active agent in database
-    if local_interactive_mode:
-        patch_active_agent(tenant_id or "cli-test", user_id or "cli-test", thread_id, "dining")
-    
-    # Add context about available parameters
-    state["messages"].append(SystemMessage(
-        content=f"If tool to be called requires tenantId='{tenant_id}', userId='{user_id}', session_id='{thread_id}', thread_id='{thread_id}', include these in the JSON parameters when invoking the tool. Do not ask the user for them."
-    ))
-    
-    response = await dining_agent.ainvoke(state, config)
-    
-    # Remove system message
-    if isinstance(response, dict) and "messages" in response:
-        response["messages"] = [
-            msg for msg in response["messages"]
-            if not isinstance(msg, SystemMessage)
-        ]
-    
-    return Command(update=response, goto="human")
-
-
-@traceable(run_type="llm")
-async def call_itinerary_generator_agent(state: MessagesState, config) -> Command[Literal["itinerary_generator", "orchestrator", "human"]]:
-    """
-    Itinerary Generator: Synthesizes all gathered info into day-by-day plan.
-    """
-    thread_id = config["configurable"].get("thread_id", "UNKNOWN_THREAD_ID")
-    user_id = config["configurable"].get("userId", "UNKNOWN_USER_ID")
-    tenant_id = config["configurable"].get("tenantId", "UNKNOWN_TENANT_ID")
-    
-    logger.info("📋 Itinerary Generator synthesizing plan...")
-    
-    # Patch active agent in database
-    if local_interactive_mode:
-        patch_active_agent(tenant_id or "cli-test", user_id or "cli-test", thread_id, "itinerary_generator")
-    
-    # Add context about available parameters
-    state["messages"].append(SystemMessage(
-        content=f"If tool to be called requires tenantId='{tenant_id}', userId='{user_id}', session_id='{thread_id}', thread_id='{thread_id}', include these in the JSON parameters when invoking the tool. Do not ask the user for them."
-    ))
-    
-    response = await itinerary_generator_agent.ainvoke(state, config)
-    
-    # Remove system message
-    if isinstance(response, dict) and "messages" in response:
-        response["messages"] = [
-            msg for msg in response["messages"]
-            if not isinstance(msg, SystemMessage)
-        ]
-    
-    return Command(update=response, goto="human")
-
-
-
-@traceable
-def human_node(state: MessagesState, config) -> None:
-    """
-    Human node: Interrupts for user input in interactive mode.
-    """
-    interrupt(value="Ready for user input.")
-    return None
-
-
-
-def get_active_agent(state: MessagesState, config) -> str:
-    """
-    Extract active agent from ToolMessage or fallback to Cosmos DB.
-    This is used by the router to determine which specialized agent to call.
-    """
-    thread_id = config["configurable"].get("thread_id", "UNKNOWN_THREAD_ID")
-    user_id = config["configurable"].get("userId", "UNKNOWN_USER_ID")
-    tenant_id = config["configurable"].get("tenantId", "UNKNOWN_TENANT_ID")
-
-    activeAgent = None
-    
-    # Search for last ToolMessage and try to extract `goto`
-    for message in reversed(state['messages']):
-        if isinstance(message, ToolMessage):
-            try:
-                content_json = json.loads(message.content)
-                activeAgent = content_json.get("goto")
-                if activeAgent:
-                    logger.info(f"🎯 Extracted activeAgent from ToolMessage: {activeAgent}")
-                    break
-            except Exception as e:
-                logger.debug(f"Failed to parse ToolMessage content: {e}")
-    
-    # Fallback: Cosmos DB lookup if needed
-    if not activeAgent:
-        try:
-            session_doc = sessions_container.read_item(
-                item=thread_id,
-                partition_key=[tenant_id, user_id, thread_id]
-            )
-            activeAgent = session_doc.get('activeAgent', 'unknown')
-            logger.info(f"Active agent from DB: {activeAgent}")
-        except Exception as e:
-            logger.error(f"Error retrieving active agent from DB: {e}")
-            activeAgent = "unknown"
-    
-    valid_agents = {"orchestrator", "hotel", "activity", "dining", "itinerary_generator", "human"}
-    if activeAgent in [None, "unknown"] or activeAgent not in valid_agents:
-        logger.info(f"activeAgent is '{activeAgent}', defaulting to orchestrator")
-        activeAgent = "orchestrator"
-    
-    return activeAgent
-
-
-# ============================================================================
-# Build Agent Graph
-# ============================================================================
 
 def build_agent_graph():
-    """
-    Build the multi-agent graph using LangGraph.
-    
-    Graph structure:
-    - User input → Orchestrator (entry point)
-    - Orchestrator routes via transfer_to_ tools
-    - Specialized agents (Hotel, Activity, Dining) → Itinerary Generator or Orchestrator
-    - Itinerary Generator → Orchestrator only
-    - All agents → Human node (for user interrupts)
-    """
-    logger.info("🏗️  Building multi-agent graph...")
-    
-    builder = StateGraph(MessagesState)
-    
-    # Add all agent nodes (5 agents total)
-    builder.add_node("orchestrator", call_orchestrator_agent)
-    builder.add_node("hotel", call_hotel_agent)
-    builder.add_node("activity", call_activity_agent)
-    builder.add_node("dining", call_dining_agent)
-    builder.add_node("itinerary_generator", call_itinerary_generator_agent)
-    builder.add_node("human", human_node)
-    
-    # Set entry point - always start with orchestrator
-    builder.add_edge(START, "orchestrator")
-    
-    # Orchestrator routing - can route to any specialized agent
-    builder.add_conditional_edges(
-        "orchestrator",
-        get_active_agent,
-        {
-            "hotel": "hotel",
-            "activity": "activity",
-            "dining": "dining",
-            "itinerary_generator": "itinerary_generator",
-            "human": "human",  # Wait for user input
-            "orchestrator": "orchestrator",  # fallback
-        }
-    )
-    
-    # Hotel routing - can call itinerary_generator or orchestrator
-    builder.add_conditional_edges(
-        "hotel",
-        get_active_agent,
-        {
-            "itinerary_generator": "itinerary_generator",
-            "orchestrator": "orchestrator",
-            "hotel": "hotel",  # Can stay in hotel
-        }
-    )
-    
-    # Activity routing - can call itinerary_generator or orchestrator
-    builder.add_conditional_edges(
-        "activity",
-        get_active_agent,
-        {
-            "itinerary_generator": "itinerary_generator",
-            "orchestrator": "orchestrator",
-            "activity": "activity",  # Can stay in activity
-        }
-    )
-    
-    # Dining routing - can call itinerary_generator or orchestrator
-    builder.add_conditional_edges(
-        "dining",
-        get_active_agent,
-        {
-            "itinerary_generator": "itinerary_generator",
-            "orchestrator": "orchestrator",
-            "dining": "dining",  # Can stay in dining
-        }
-    )
-    
-    # Itinerary Generator routing - can return to orchestrator or stay
-    builder.add_conditional_edges(
-        "itinerary_generator",
-        get_active_agent,
-        {
-            "orchestrator": "orchestrator",
-            "itinerary_generator": "itinerary_generator",  # Can stay to handle follow-ups
-        }
-    )
-    
-    # Compile with checkpointer
-    checkpointer = CosmosDBSaver(
-        database_name=DATABASE_NAME,
-        container_name=checkpoint_container
-    )
-
-    graph = builder.compile(checkpointer=checkpointer)
-    
-    logger.info("✅ Multi-agent graph built successfully")
-    logger.info("📊 Graph structure:")
-    logger.info("   Entry: User → Orchestrator")
-    logger.info("   Orchestrator → Hotel/Activity/Dining/Itinerary")
-    logger.info("   Hotel/Activity/Dining → Itinerary Generator or Orchestrator")
-    logger.info("   Itinerary Generator → Orchestrator only")
-    logger.info("   Agents: 5 total (Orchestrator, Hotel, Activity, Dining, Itinerary Generator)")
-    
-    return graph
+    """Return the initialized supervisor graph for existing API callers."""
+    if supervisor_agent is None:
+        raise RuntimeError("Travel agents have not been initialized; call setup_agents() first")
+    logger.info("🏗️  Returning supervisor ReAct graph")
+    return supervisor_agent
 
 
 # ============================================================================
@@ -620,38 +508,29 @@ def build_agent_graph():
 # ============================================================================
 
 async def interactive_chat():
-    """
-    Interactive CLI for testing the travel assistant.
-    Similar to banking app's interactive mode.
-    """
-    global local_interactive_mode
-    local_interactive_mode = True
-    
+    """Interactive CLI for testing the travel assistant."""
     thread_id = str(uuid.uuid4())
-    # thread_id = "thread-7ab201e9-2bbc-41cc-a220-995558523a4f"
     thread_config = {
         "configurable": {
             "thread_id": thread_id,
             "userId": "Tony",
-            "tenantId": "Marvel"
+            "tenantId": "Marvel",
         }
     }
-    
-    print("\n" + "="*70)
+
+    print("\n" + "=" * 70)
     print("🌍 Travel Assistant - Interactive Test Mode")
-    print("="*70)
+    print("=" * 70)
     print("Type 'exit' to end the conversation")
-    print("="*70 + "\n")
-    
-    # Build graph
+    print("=" * 70 + "\n")
+
     graph = build_agent_graph()
-    
     user_input = input("You: ")
-    
+
     while user_input.lower() != "exit":
-        input_message = {"messages": [{"role": "user", "content": user_input}]}
+        input_message = {"messages": [HumanMessage(content=user_input)]}
         response_found = False
-        
+
         async for update in graph.astream(input_message, config=thread_config, stream_mode="updates"):
             for node_id, value in update.items():
                 if isinstance(value, dict) and value.get("messages"):
@@ -659,12 +538,12 @@ async def interactive_chat():
                     if isinstance(last_message, AIMessage):
                         print(f"{node_id}: {last_message.content}\n")
                         response_found = True
-        
+
         if not response_found:
             logger.debug("No AI response received.")
-        
+
         user_input = input("You: ")
-    
+
     print("\n👋 Goodbye!")
 
 
@@ -673,9 +552,8 @@ async def interactive_chat():
 # ============================================================================
 
 if __name__ == "__main__":
-    # Setup agents and run interactive chat
     async def main():
         await setup_agents()
         await interactive_chat()
-    
+
     asyncio.run(main())

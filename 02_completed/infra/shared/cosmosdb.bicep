@@ -8,6 +8,11 @@ param tripsContainerName string
 param usersContainerName string
 param debugLogsContainerName string
 param checkpointsContainerName string
+param memoriesContainerName string = 'memories'
+param counterContainerName string = 'counter'
+param leasesContainerName string = 'leases'
+@description('Embedding dimensions for the memories container vector index. Must match the embedding model used by AgentMemoryToolkit (text-embedding-3-small = 1536).')
+param memoriesEmbeddingDimensions int = 1536
 param location string = resourceGroup().location
 param name string
 param tags object = {}
@@ -409,6 +414,154 @@ resource cosmosContainerCheckpoints 'Microsoft.DocumentDB/databaseAccounts/sqlDa
       partitionKey: {
         paths: [
           '/session_id'
+        ]
+        kind: 'Hash'
+        version: 2
+      }
+      indexingPolicy: {
+        indexingMode: 'consistent'
+        automatic: true
+        includedPaths: [
+          {
+            path: '/*'
+          }
+        ]
+        excludedPaths: [
+          {
+            path: '/"_etag"/?'
+          }
+        ]
+      }
+    }
+  }
+  tags: tags
+}
+
+
+// Container 9: Memories (AgentMemoryToolkit)
+// Partition Key: [/user_id, /thread_id] (hierarchical, MultiHash)
+// Vector search: /embedding (diskANN), Full-text: /content (en-US)
+// TTL enabled (per-doc opt-in), excluded paths match toolkit _container_policies
+resource cosmosContainerMemories 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-12-01-preview' = {
+  parent: database
+  name: memoriesContainerName
+  properties: {
+    resource: {
+      id: memoriesContainerName
+      partitionKey: {
+        paths: [
+          '/user_id'
+          '/thread_id'
+        ]
+        kind: 'MultiHash'
+        version: 2
+      }
+      defaultTtl: -1
+      indexingPolicy: {
+        indexingMode: 'consistent'
+        automatic: true
+        includedPaths: [
+          {
+            path: '/*'
+          }
+        ]
+        excludedPaths: [
+          {
+            path: '/"_etag"/?'
+          }
+          {
+            path: '/embedding/*'
+          }
+          {
+            path: '/source_memory_ids/*'
+          }
+          {
+            path: '/supersedes_ids/*'
+          }
+        ]
+        vectorIndexes: [
+          {
+            path: '/embedding'
+            type: 'diskANN'
+          }
+        ]
+        fullTextIndexes: [
+          {
+            path: '/content'
+            language: 'en-US'
+          }
+        ]
+      }
+      vectorEmbeddingPolicy: {
+        vectorEmbeddings: [
+          {
+            path: '/embedding'
+            dataType: 'float32'
+            distanceFunction: 'cosine'
+            dimensions: memoriesEmbeddingDimensions
+          }
+        ]
+      }
+      fullTextPolicy: {
+        defaultLanguage: 'en-US'
+        fullTextPaths: [
+          {
+            path: '/content'
+            language: 'en-US'
+          }
+        ]
+      }
+    }
+  }
+  tags: tags
+}
+
+// Container 10: Counter (AgentMemoryToolkit per-(user, thread) turn counts)
+// Partition Key: [/user_id, /thread_id] (hierarchical, MultiHash)
+resource cosmosContainerCounter 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-12-01-preview' = {
+  parent: database
+  name: counterContainerName
+  properties: {
+    resource: {
+      id: counterContainerName
+      partitionKey: {
+        paths: [
+          '/user_id'
+          '/thread_id'
+        ]
+        kind: 'MultiHash'
+        version: 2
+      }
+      indexingPolicy: {
+        indexingMode: 'consistent'
+        automatic: true
+        includedPaths: [
+          {
+            path: '/*'
+          }
+        ]
+        excludedPaths: [
+          {
+            path: '/"_etag"/?'
+          }
+        ]
+      }
+    }
+  }
+  tags: tags
+}
+
+// Container 11: Leases (AgentMemoryToolkit background-processing leases)
+// Partition Key: /id (simple)
+resource cosmosContainerLeases 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-12-01-preview' = {
+  parent: database
+  name: leasesContainerName
+  properties: {
+    resource: {
+      id: leasesContainerName
+      partitionKey: {
+        paths: [
+          '/id'
         ]
         kind: 'Hash'
         version: 2
