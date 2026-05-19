@@ -409,6 +409,86 @@ def discover_places(
     return places
 
 
+@mcp.tool()
+@traceable
+async def discover_itinerary(
+        geo_scope: str,
+        query: str,
+        user_id: str,
+        tenant_id: str = "",
+        aspects: Optional[List[str]] = None,
+        dietary: Optional[List[str]] = None,
+        accessibility: Optional[List[str]] = None,
+        price_tier: Optional[str] = None,
+        user_preference_vector: list[float] | None = None,
+        per_aspect_limit: int = 5,
+) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Multi-aspect place discovery in a single MCP round-trip.
+
+    Runs hybrid RRF Cosmos queries for each requested aspect (hotel / activity /
+    restaurant) **in parallel** server-side via asyncio.gather. Returns one bucketed
+    result so a calling agent can build a full itinerary in one synthesis step
+    instead of issuing 3 separate `discover_places` tool calls.
+
+    Args:
+        geo_scope: City (e.g., "tokyo"). Required.
+        query: Natural-language search phrase (e.g., "3-day trip with food and culture").
+        user_id: User identifier.
+        tenant_id: Tenant identifier.
+        aspects: Subset of {"hotel", "activity", "restaurant"}. Accepts "dining"
+            (mapped to "restaurant") and "attraction" (mapped to "activity") as
+            aliases. Defaults to all three.
+        dietary: Optional dietary preferences (applied to all aspects).
+        accessibility: Optional accessibility preferences.
+        price_tier: Optional priceTier filter.
+        user_preference_vector: Optional embedding for personalized RRF re-ranking.
+        per_aspect_limit: Number of results returned per aspect (default 5).
+
+    Returns:
+        Dict keyed by aspect name ("hotel" / "activity" / "restaurant") whose
+        values are the top `per_aspect_limit` place records for that aspect.
+    """
+    import asyncio
+
+    aspect_aliases = {"dining": "restaurant", "attraction": "activity"}
+    canonical_aspects = [aspect_aliases.get(a, a) for a in (aspects or ["hotel", "activity", "restaurant"])]
+    canonical_aspects = [a for a in dict.fromkeys(canonical_aspects) if a in {"hotel", "activity", "restaurant"}]
+
+    logger.info(f"🗺️  ========== DISCOVER_ITINERARY TOOL CALLED ==========")
+    logger.info(f"     - geo_scope={geo_scope!r} query={query!r} aspects={canonical_aspects}")
+    logger.info(f"     - user_id={user_id} tenant_id={tenant_id} per_aspect_limit={per_aspect_limit}")
+
+    if not canonical_aspects:
+        return {}
+
+    async def _one(place_type: str) -> tuple[str, List[Dict[str, Any]]]:
+        try:
+            results = await asyncio.to_thread(
+                query_places_hybrid,
+                query=query,
+                geo_scope_id=geo_scope,
+                place_type=place_type,
+                dietary=dietary,
+                accessibility=accessibility,
+                price_tier=price_tier,
+                limit=per_aspect_limit,
+                user_preference_vector=user_preference_vector,
+            )
+        except Exception as exc:
+            logger.error(f"❌ discover_itinerary aspect {place_type!r} failed: {exc}")
+            results = []
+        return place_type, results
+
+    gathered = await asyncio.gather(*[_one(a) for a in canonical_aspects])
+    bucketed: Dict[str, List[Dict[str, Any]]] = {pt: items for pt, items in gathered}
+    logger.info(
+        "✅ discover_itinerary returning: "
+        + ", ".join(f"{pt}={len(items)}" for pt, items in bucketed.items())
+    )
+    return bucketed
+
+
 # ============================================================================
 # 5. Trip Management Tools
 # ============================================================================

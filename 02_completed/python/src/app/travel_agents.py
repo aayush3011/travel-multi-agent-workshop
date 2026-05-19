@@ -19,7 +19,7 @@ if project_root not in sys.path:
 
 load_dotenv(override=False)
 
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -150,9 +150,10 @@ def _extract_user_preference_vector(
 
 
 def _wrap_discover_places_tool(mcp_tool: Any) -> Any:
-    """Inject the request-scoped preference vector into discover_places MCP calls."""
+    """Inject the request-scoped preference vector into discover_* MCP calls."""
     description = getattr(mcp_tool, "description", None) or "Discover places."
     args_schema = getattr(mcp_tool, "args_schema", None)
+    tool_name = getattr(mcp_tool, "name", "discover_places")
 
     async def discover_places_with_preference_context(
         config: RunnableConfig,
@@ -163,13 +164,11 @@ def _wrap_discover_places_tool(mcp_tool: Any) -> Any:
             kwargs["user_preference_vector"] = vector
         return await mcp_tool.ainvoke(kwargs, config=config)
 
-    discover_places_with_preference_context.__name__ = getattr(
-        mcp_tool, "name", "discover_places"
-    )
+    discover_places_with_preference_context.__name__ = tool_name
     discover_places_with_preference_context.__doc__ = description
 
     return tool(
-        getattr(mcp_tool, "name", "discover_places"),
+        tool_name,
         args_schema=args_schema,
         description=description,
     )(discover_places_with_preference_context)
@@ -178,7 +177,8 @@ def _wrap_discover_places_tool(mcp_tool: Any) -> Any:
 def _with_preference_vector_injection(tools: list[Any]) -> list[Any]:
     wrapped_tools: list[Any] = []
     for mcp_tool in tools:
-        if getattr(mcp_tool, "name", "").startswith("discover_places"):
+        name = getattr(mcp_tool, "name", "")
+        if name.startswith("discover_places") or name == "discover_itinerary":
             wrapped_tools.append(_wrap_discover_places_tool(mcp_tool))
         else:
             wrapped_tools.append(mcp_tool)
@@ -282,30 +282,120 @@ async def find_places_tool(
     user_preference_vector: list[float] | None = None,
     config: RunnableConfig = None,
 ) -> str:
-    """Search hotels, activities, or dining in a city. Pass all needed aspects in one call for parallel fan-out."""
-    if _find_places_agent is None:
-        raise RuntimeError("Travel agents have not been initialized")
-
+    """Search hotels, activities, or dining in a city. Returns raw structured place data."""
     effective_config = config or {"configurable": {}, "metadata": {}}
     vector = _extract_user_preference_vector(user_preference_vector, effective_config)
-    constraints_payload = constraints or {}
-    user_msg = (
-        f"city={city!r} aspects={aspects!r} constraints={constraints_payload!r} "
-        f"user_preference_vector={'runtime-injected' if vector else 'absent'}. "
-        "If a preference vector is runtime-injected, omit it from tool-call JSON; "
-        "the discover_places tool wrapper will attach it without exposing the vector."
+    configurable = effective_config.get("configurable", {}) or {}
+    user_id = (
+        configurable.get("user_id")
+        or configurable.get("userId")
+        or ""
     )
-    state = {"messages": [HumanMessage(content=user_msg)]}
+    tenant_id = (
+        configurable.get("tenant_id")
+        or configurable.get("tenantId")
+        or ""
+    )
 
     token = _current_user_preference_vector.set(vector)
     try:
-        result = await _find_places_agent.ainvoke(
-            state,
+        return await _oneshot_find_places(
+            city=city,
+            aspects=list(aspects),
+            constraints=constraints,
+            user_id=str(user_id),
+            tenant_id=str(tenant_id),
+            vector=vector,
             config=_subagent_config(effective_config, "find_places"),
         )
-        return _last_message_content(result)
     finally:
         _current_user_preference_vector.reset(token)
+
+
+_FIND_PLACES_SELECTOR_PROMPT = (
+    "You translate the supervisor's structured place-search request into ONE tool call. "
+    "Rules:\n"
+    "- For 2 or 3 aspects, call `discover_itinerary` once with `aspects` set to the requested aspects.\n"
+    "- For exactly 1 aspect, call `discover_places` with `filters={\"type\": <aspect>}`.\n"
+    "- Aspect names in tool args MUST be: 'hotel', 'activity', 'restaurant'. Map any 'dining' aspect to 'restaurant'.\n"
+    "- `geo_scope` = the city.\n"
+    "- Derive a short `query` (under 20 words) from the constraints: interests, vibe, dietary, budget, accessibility.\n"
+    "- Always pass `user_id` and `tenant_id` exactly as given.\n"
+    "- NEVER include `user_preference_vector` in tool args; the runtime injects it.\n"
+    "- Output ONLY the tool call. No prose."
+)
+
+
+async def _oneshot_find_places(
+    city: str,
+    aspects: list[str],
+    constraints: dict[str, Any] | None,
+    user_id: str,
+    tenant_id: str,
+    vector: list[float] | None,
+    config: RunnableConfig,
+) -> str:
+    """One-shot find-places node: ONE LLM call selects tool args, Python executes, return raw result.
+
+    Replaces the ReAct sub-agent's 2-LLM-call loop (decide + format) with a single
+    forced tool-choice call. The tool output is returned verbatim to the supervisor,
+    which synthesizes the final user-facing response.
+    """
+    selector_tools = [
+        wrapped_tool
+        for wrapped_tool in _mcp_find_places_tools
+        if getattr(wrapped_tool, "name", "").startswith("discover_")
+    ]
+    if not selector_tools:
+        return json.dumps({"error": "no discover_* tools available"})
+
+    constraints_str = json.dumps(constraints or {}, ensure_ascii=False, default=str)
+    messages = [
+        SystemMessage(content=_FIND_PLACES_SELECTOR_PROMPT),
+        HumanMessage(
+            content=(
+                f"city={city!r}\n"
+                f"aspects={aspects!r}\n"
+                f"constraints={constraints_str}\n"
+                f"user_id={user_id!r}\n"
+                f"tenant_id={tenant_id!r}\n"
+                f"user_preference_vector={'runtime-injected' if vector else 'absent'}"
+            )
+        ),
+    ]
+
+    bound = model.bind_tools(selector_tools, tool_choice="required")
+    ai_msg = await bound.ainvoke(messages, config=config)
+
+    tool_calls = getattr(ai_msg, "tool_calls", None) or []
+    if not tool_calls:
+        return json.dumps(
+            {"error": "selector model emitted no tool call", "city": city, "aspects": aspects},
+            ensure_ascii=False,
+        )
+
+    tools_by_name = {wrapped_tool.name: wrapped_tool for wrapped_tool in selector_tools}
+    results: list[dict[str, Any]] = []
+    for call in tool_calls:
+        name = call.get("name")
+        args = dict(call.get("args") or {})
+        args.setdefault("user_id", user_id)
+        if tenant_id:
+            args.setdefault("tenant_id", tenant_id)
+        tool_fn = tools_by_name.get(name)
+        if tool_fn is None:
+            results.append({"tool": name, "error": "unknown tool"})
+            continue
+        try:
+            raw = await tool_fn.ainvoke(args, config=config)
+        except Exception as exc:
+            logger.warning("oneshot find_places tool=%s failed: %s", name, exc)
+            results.append({"tool": name, "error": str(exc)})
+            continue
+        loggable_args = {k: v for k, v in args.items() if k != "user_preference_vector"}
+        results.append({"tool": name, "args": loggable_args, "result": raw})
+
+    return json.dumps(results, ensure_ascii=False, default=str)
 
 
 @tool("create_or_update_itinerary", args_schema=ItineraryInput)
@@ -434,7 +524,7 @@ async def setup_agents():
     _mcp_find_places_tools = _with_preference_vector_injection(
         filter_tools_by_prefix(
             all_tools,
-            ["discover_places", "add_turn", "recall_memories", "get_user_summary"],
+            ["discover_places", "discover_itinerary", "add_turn", "recall_memories", "get_user_summary"],
         )
     )
     _mcp_itinerary_tools = filter_tools_by_prefix(
@@ -454,11 +544,8 @@ async def setup_agents():
     logger.info(f"   Find Places tools: {len(_mcp_find_places_tools)} {_tool_names(_mcp_find_places_tools)}")
     logger.info(f"   Itinerary tools: {len(_mcp_itinerary_tools)} {_tool_names(_mcp_itinerary_tools)}")
 
-    _find_places_agent = _create_agent(
-        _bind_parallel_tool_calls(model),
-        _mcp_find_places_tools,
-        load_prompt("find_places"),
-    )
+    _find_places_agent = None
+    logger.info("   Find Places: one-shot tool-selector node (no ReAct loop)")
 
     _itinerary_agent = _create_agent(
         model,
