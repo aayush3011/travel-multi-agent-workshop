@@ -437,7 +437,7 @@ async def create_or_update_itinerary_tool(
     return _last_message_content(result)
 
 
-async def setup_agents():
+async def setup_agents(checkpointer=None):
     """
     Initialize the supervisor and internal sub-agents with their MCP tools.
 
@@ -557,7 +557,7 @@ async def setup_agents():
         _bind_parallel_tool_calls(model),
         tools=[find_places_tool, create_or_update_itinerary_tool, *_mcp_session_tools],
         prompt_text=SUPERVISOR_BASE_PROMPT,
-        checkpointer=_create_checkpointer(),
+        checkpointer=checkpointer or _create_checkpointer(),
     )
 
     logger.info("✅ Supervisor and sub-agents created successfully\n")

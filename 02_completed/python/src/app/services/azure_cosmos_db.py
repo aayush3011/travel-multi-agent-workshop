@@ -478,8 +478,16 @@ def query_places_hybrid(
     # Always include VectorDistance
     fulltext_clauses.append("VectorDistance(c.embedding, @embedding)")
     if user_preference_vector is not None:
-        fulltext_clauses.append("VectorDistance(c.embedding, @pref_vector)")
-        params.append({"name": "@pref_vector", "value": user_preference_vector})
+        # Places embeddings are 1024-dim; user_preference_vector from toolkit
+        # may be 1536-dim. Only include in RRF if dimensions match.
+        if len(user_preference_vector) == len(embedding):
+            fulltext_clauses.append("VectorDistance(c.embedding, @pref_vector)")
+            params.append({"name": "@pref_vector", "value": user_preference_vector})
+        else:
+            logger.warning(
+                "Skipping user_preference_vector in RRF: dim %d != places dim %d",
+                len(user_preference_vector), len(embedding),
+            )
     
     rrf_clause = ", ".join(fulltext_clauses)
     

@@ -253,8 +253,10 @@ app = fastapi.FastAPI(
 
 # Global flag to track agent initialization
 _agents_initialized = False
+_init_lock = asyncio.Lock()
 _graph = None
 _checkpointer = None
+_background_tasks: set[asyncio.Task] = set()
 
 # Agent name mapping (for consistent display)
 agent_mapping = {
@@ -279,9 +281,9 @@ async def initialize_agents():
     for attempt in range(max_retries):
         try:
             logger.info(f"Attempt {attempt + 1}/{max_retries}: Initializing agents...")
-            await setup_agents()
-            _graph = build_agent_graph()
             _checkpointer = get_checkpoint_saver()
+            await setup_agents(checkpointer=_checkpointer)
+            _graph = build_agent_graph()
             _agents_initialized = True
             logger.info("✅ Agents initialized successfully!")
             return
@@ -328,13 +330,18 @@ async def ensure_agents_initialized():
     """Ensure agents are initialized before handling requests"""
     global _agents_initialized
 
-    if not _agents_initialized:
+    if _agents_initialized:
+        return
+
+    async with _init_lock:
+        if _agents_initialized:
+            return
         logger.info("🔄 Initializing agents on demand...")
         try:
-            await setup_agents()
             global _graph, _checkpointer
-            _graph = build_agent_graph()
             _checkpointer = get_checkpoint_saver()
+            await setup_agents(checkpointer=_checkpointer)
+            _graph = build_agent_graph()
             _agents_initialized = True
             logger.info("✅ Agents initialized successfully!")
         except Exception as e:
@@ -455,10 +462,13 @@ async def _build_initial_messages(
 
     messages: list[Any] = []
     if summary_text:
-        messages.append(SystemMessage(content=(
-            "## What we know about this traveller\n"
-            + summary_text
-        )))
+        messages.append(SystemMessage(
+            content=(
+                "## What we know about this traveller\n"
+                + summary_text
+            ),
+            id="user_summary",
+        ))
     if history_messages:
         messages.extend(history_messages)
     messages.append(HumanMessage(content=user_message))
@@ -1209,7 +1219,9 @@ async def chat_event_generator(
     except Exception as exc:
         logger.warning("chat message persistence failed: %s", exc)
 
-    asyncio.create_task(_flush_memory_bg(client, user_id, thread_id))
+    task = asyncio.create_task(_flush_memory_bg(client, user_id, thread_id))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
     yield {"event": "done", "thread_id": thread_id}
 
 
