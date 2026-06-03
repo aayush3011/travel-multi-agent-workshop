@@ -16,7 +16,7 @@ By the end of this workshop, you'll have created a complete travel planning appl
 
 ### Memory layer
 
-Memory is provided by the `agent_memory_toolkit` SDK, installed in development as an editable dependency pointing at `../AgentMemoryToolkit` (TODO: switch to the published PyPI package). The toolkit auto-creates its Cosmos DB `memories`, `counter`, and `leases` containers on first run, so no Bicep container resources are needed for memory. Every 10 chat turns, a background auto-flush produces summaries, facts, and a `user_summary`. Memory records are partitioned by `(user_id, thread_id)`; `tenantId` remains for sessions, messages, and trips, but is no longer part of memory records. Memory prompts ship inside the toolkit, so `preference_extraction.prompty`, `memory_conflict_resolution.prompty`, and `summarizer.prompty` have been removed from this repo.
+Memory is provided by the [`azure-cosmos-agent-memory`](https://pypi.org/project/azure-cosmos-agent-memory/) PyPI package. The toolkit auto-creates its Cosmos DB `memories`, `memories_turns`, `memories_summaries`, and `counter` containers on first run via `connect_cosmos()`. Auto-summarization thresholds are controlled by environment variables (`FACT_EXTRACTION_EVERY_N`, `DEDUP_EVERY_N`, `THREAD_SUMMARY_EVERY_N`, `USER_SUMMARY_EVERY_N`). Memory records are partitioned by `(user_id, thread_id)`. Memory prompts ship inside the package, so no `.prompty` files for memory are needed in this repo.
 
 ### Learning Objectives
 
@@ -75,14 +75,14 @@ Open a new terminal, navigate to the `02_completed` directory, then run:
 
 **Linux/macOS:**
 ```bash
-source venv/bin/activate
+source .venv-travel/bin/activate
 cd mcp_server
 PYTHONPATH=../python python mcp_http_server.py
 ```
 
 **Windows (PowerShell):**
 ```bash
-.\venv\Scripts\Activate.ps1
+.\.venv-travel\Scripts\Activate.ps1
 cd mcp_server
 $env:PYTHONPATH="..\python"
 python mcp_http_server.py
@@ -90,7 +90,7 @@ python mcp_http_server.py
 
 **Windows (Command Prompt):**
 ```cmd
-venv\Scripts\activate.bat
+.venv-travel\Scripts\activate.bat
 set PYTHONPATH=../python && python mcp_http_server.py
 ```
 
@@ -100,21 +100,21 @@ Open a new terminal, navigate to the `02_completed` directory, then run:
 
 **Linux/macOS:**
 ```bash
-source venv/bin/activate
+source .venv-travel/bin/activate
 cd python
 uvicorn src.app.travel_agents_api:app --reload --host 0.0.0.0 --port 8000
 ```
 
 **Windows (PowerShell):**
 ```powershell
-venv\Scripts\Activate.ps1
+.\.venv-travel\Scripts\Activate.ps1
 cd python
 uvicorn src.app.travel_agents_api:app --reload --host 0.0.0.0 --port 8000
 ```
 
 **Windows (Command Prompt):**
 ```cmd
-venv\Scripts\activate.bat
+.venv-travel\Scripts\activate.bat
 uvicorn src.app.travel_agents_api:app --reload --host 0.0.0.0 --port 8000
 ```
 
