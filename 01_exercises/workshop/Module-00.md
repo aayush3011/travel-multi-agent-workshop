@@ -135,7 +135,7 @@ The `azd up` command will:
 
 ✅ Create an Azure resource group: rg-`EnvironmentName`  
 ✅ Deploy Azure Cosmos DB with three containers (Users, Places, Memories)  
-✅ Deploy Azure OpenAI with GPT-4 and text-embedding-ada-002 models  
+✅ Deploy Azure OpenAI with GPT-4 and text-embedding-3-small (1536-dim) embeddings  
 ✅ Configure managed identity and role assignments  
 ✅ Create a Python virtual environment (`.venv-travel`)  
 ✅ Install all Python dependencies from `requirements.txt`  
@@ -618,7 +618,7 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 **Solution**: Verify your `.env` file configuration:
 
 - Check `python/.env` exists and contains `COSMOSDB_ENDPOINT`
-- On Windows, verify `COSMOS_KEY` is present
+- On Windows, verify `COSMOSDB_KEY` is present
 - Ensure the values match your Azure Cosmos DB account
 - Try logging in to Azure again: `azd auth login`
 

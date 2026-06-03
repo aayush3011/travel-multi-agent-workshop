@@ -447,6 +447,58 @@ async def _load_checkpoint_history(config: dict) -> list:
     return _extract_checkpoint_messages(checkpoints[-1])
 
 
+async def _recall_memory_context(
+    client: Any,
+    user_id: str,
+    query: str,
+    top_k: int = 5,
+) -> str:
+    """Pre-fetch durable memories relevant to the user's current message.
+
+    Returns a compact bullet list of fact / episodic / procedural memories that the
+    supervisor can read as authoritative context for this turn. Excludes raw 'turn'
+    records (they're noisy and already covered by checkpoint history). Empty string
+    on no hits or any error -- this path must never break the chat request.
+    """
+    if not user_id or not query:
+        return ""
+    try:
+        hits = await client.search_cosmos(
+            search_terms=query,
+            user_id=user_id,
+            hybrid_search=True,
+            top_k=top_k,
+            memory_types=["fact", "episodic", "procedural"],
+        )
+    except Exception as exc:
+        logger.warning(
+            "recall pre-fetch failed for user=%s query=%r: %s",
+            user_id, query, exc,
+        )
+        return ""
+    if not hits:
+        return ""
+
+    lines: list[str] = []
+    for hit in hits:
+        content = (hit.get("content") or "").strip()
+        if not content:
+            continue
+        mtype = hit.get("type") or hit.get("memory_type") or "memory"
+        tag_parts: list[str] = [str(mtype)]
+        if mtype == "episodic":
+            metadata = hit.get("metadata") or {}
+            scope_type = (metadata.get("scope_type") or "").strip()
+            scope_value = (metadata.get("scope_value") or "").strip()
+            if scope_type and scope_value:
+                tag_parts.append(f"scope: {scope_type}={scope_value}")
+        salience = hit.get("salience")
+        if isinstance(salience, (int, float)):
+            tag_parts.append(f"salience {salience:.2f}")
+        lines.append(f"- [{', '.join(tag_parts)}] {content}")
+    return "\n".join(lines)
+
+
 async def _build_initial_messages(
     user_id: str,
     user_message: str,
@@ -454,7 +506,10 @@ async def _build_initial_messages(
     client: Any | None = None,
 ) -> tuple[list, list[float] | None]:
     memory_client = client or await get_memory_client()
-    summary_doc = await get_cached_user_summary(memory_client, user_id)
+    summary_doc, memory_context = await asyncio.gather(
+        get_cached_user_summary(memory_client, user_id),
+        _recall_memory_context(memory_client, user_id, user_message),
+    )
     summary_text = (summary_doc or {}).get("content") or ""
     pref_vector = (summary_doc or {}).get("embedding")
     if not isinstance(pref_vector, list):
@@ -468,6 +523,14 @@ async def _build_initial_messages(
                 + summary_text
             ),
             id="user_summary",
+        ))
+    if memory_context:
+        messages.append(SystemMessage(
+            content=(
+                "## Relevant memories for this request\n"
+                + memory_context
+            ),
+            id="recalled_memories",
         ))
     if history_messages:
         messages.extend(history_messages)
@@ -495,7 +558,12 @@ def _sse(data: dict) -> str:
 
 async def _flush_memory_bg(client: Any, user_id: str, thread_id: str):
     try:
-        await client.process_now(user_id=user_id, thread_id=thread_id)
+        # Canonical toolkit path: flushes locally-buffered turns to Cosmos AND
+        # writes per-(user, thread) counts to the `counter` container, then
+        # schedules cadence-driven processing (fact extraction, dedup, thread
+        # summary, user summary) per FACT_EXTRACTION_EVERY_N / DEDUP_EVERY_N /
+        # THREAD_SUMMARY_EVERY_N / USER_SUMMARY_EVERY_N env vars.
+        await client.push_to_cosmos()
     except Exception as exc:
         logger.warning(
             "background memory flush failed for user=%s thread=%s: %s",
@@ -1148,7 +1216,7 @@ async def chat_event_generator(
     )
     config = _thread_config(tenant_id, user_id, thread_id, pref_vector)
 
-    await client.add_cosmos(
+    client.add_local(
         user_id=user_id,
         thread_id=thread_id,
         role="user",
@@ -1197,15 +1265,15 @@ async def chat_event_generator(
     final_text = "".join(accumulated).strip() or last_output_text
     if final_text:
         try:
-            await client.add_cosmos(
+            client.add_local(
                 user_id=user_id,
                 thread_id=thread_id,
-                role="assistant",
+                role="agent",
                 content=final_text,
                 memory_type="turn",
             )
         except Exception as exc:
-            logger.warning("turn capture (assistant) failed: %s", exc)
+            logger.warning("turn capture (agent) failed: %s", exc)
 
     try:
         await asyncio.to_thread(

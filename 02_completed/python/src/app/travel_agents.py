@@ -268,6 +268,11 @@ _mcp_session_tools: list[Any] = []
 _mcp_find_places_tools: list[Any] = []
 _mcp_itinerary_tools: list[Any] = []
 
+# Raw MCP recall_memories tools (list returned by filter_tools_by_prefix), wrapped
+# by recall_memories_tool below so the supervisor LLM never has to know or pass
+# user_id / tenant_id.
+_mcp_recall_memories_tool: list[Any] = []
+
 # Global agent variables
 _find_places_agent: Any | None = None
 _itinerary_agent: Any | None = None
@@ -398,6 +403,53 @@ async def _oneshot_find_places(
     return json.dumps(results, ensure_ascii=False, default=str)
 
 
+class RecallMemoriesInput(BaseModel):
+    query: str = Field(
+        ...,
+        description=(
+            "Topic or question to search the user's stored long-term memories for. "
+            "Examples: 'hotel preferences', 'dietary needs', 'recent Paris trip', "
+            "'past hiking experiences'. Use short topical phrases, not full sentences."
+        ),
+    )
+    top_k: int = Field(
+        default=5,
+        description="Maximum number of memory records to return (1-10).",
+    )
+
+
+@tool("recall_memories", args_schema=RecallMemoriesInput)
+async def recall_memories_tool(
+    query: str,
+    top_k: int = 5,
+    config: RunnableConfig = None,
+) -> str:
+    """Search the current traveller's stored long-term memories (facts, episodic events,
+    procedural notes) by topic. Use this whenever the user asks about their own
+    preferences, prior trips, or anything personal, or when you need preference
+    context to bias a `find_places` search beyond what `## What we know about this
+    traveller` already states.
+    """
+    effective_config = config or {"configurable": {}, "metadata": {}}
+    configurable = effective_config.get("configurable", {}) or {}
+    user_id = configurable.get("user_id") or configurable.get("userId") or ""
+    if not user_id:
+        return json.dumps({"error": "no user_id in runtime config"})
+
+    if not _mcp_recall_memories_tool:
+        return json.dumps({"error": "recall_memories MCP tool not loaded"})
+
+    bounded_top_k = max(1, min(int(top_k or 5), 10))
+    try:
+        return await _mcp_recall_memories_tool[0].ainvoke(
+            {"user_id": str(user_id), "query": query, "top_k": bounded_top_k},
+            config=_subagent_config(effective_config, "recall_memories"),
+        )
+    except Exception as exc:
+        logger.warning("recall_memories tool failed user=%s query=%r: %s", user_id, query, exc)
+        return json.dumps({"error": str(exc)})
+
+
 @tool("create_or_update_itinerary", args_schema=ItineraryInput)
 async def create_or_update_itinerary_tool(
     trip_id: str | None = None,
@@ -447,6 +499,7 @@ async def setup_agents(checkpointer=None):
     """
     global _mcp_client, _session_context, _persistent_session
     global _mcp_session_tools, _mcp_find_places_tools, _mcp_itinerary_tools
+    global _mcp_recall_memories_tool
     global _find_places_agent, _itinerary_agent, supervisor_agent
 
     if supervisor_agent is not None:
@@ -521,6 +574,9 @@ async def setup_agents(checkpointer=None):
         all_tools,
         ["create_session", "get_session_context", "append_turn", "add_turn"],
     )
+    _mcp_recall_memories_tool = filter_tools_by_prefix(
+        all_tools, ["recall_memories"]
+    )
     _mcp_find_places_tools = _with_preference_vector_injection(
         filter_tools_by_prefix(
             all_tools,
@@ -555,7 +611,12 @@ async def setup_agents(checkpointer=None):
 
     supervisor_agent = _create_agent(
         _bind_parallel_tool_calls(model),
-        tools=[find_places_tool, create_or_update_itinerary_tool, *_mcp_session_tools],
+        tools=[
+            find_places_tool,
+            create_or_update_itinerary_tool,
+            recall_memories_tool,
+            *_mcp_session_tools,
+        ],
         prompt_text=SUPERVISOR_BASE_PROMPT,
         checkpointer=checkpointer or _create_checkpointer(),
     )

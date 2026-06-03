@@ -1,4 +1,4 @@
-"""Async singleton wrapper around agent_memory_toolkit.aio.AsyncCosmosMemoryClient.
+"""Async singleton wrapper around azure.cosmos.agent_memory.aio.AsyncCosmosMemoryClient.
 
 All workshop memory access (MCP, REST, agents) flows through `get_memory_client()`.
 """
@@ -10,7 +10,7 @@ import os
 
 from dotenv import load_dotenv
 
-from agent_memory_toolkit.aio import AsyncCosmosMemoryClient
+from azure.cosmos.agent_memory.aio import AsyncCosmosMemoryClient
 
 load_dotenv(override=False)
 
@@ -27,11 +27,7 @@ def _get_required_env(name: str) -> str:
 
 async def _create_memory_client() -> AsyncCosmosMemoryClient:
     cosmos_endpoint = _get_required_env("COSMOSDB_ENDPOINT")
-    cosmos_database = (
-        os.environ.get("COSMOSDB_DATABASE_NAME")
-        or os.environ.get("COSMOS_DB_DATABASE_NAME")
-        or "TravelAssistant"
-    )
+    cosmos_database = os.environ.get("COSMOSDB_DATABASE_NAME", "TravelAssistant")
     ai_foundry_endpoint = _get_required_env("AZURE_OPENAI_ENDPOINT")
     chat_deployment = (
         os.environ.get("AZURE_OPENAI_CHAT_DEPLOYMENT")
@@ -46,8 +42,21 @@ async def _create_memory_client() -> AsyncCosmosMemoryClient:
     )
 
     cosmos_key = os.environ.get("COSMOSDB_KEY") or None
+
+    cosmos_container = os.environ.get("COSMOS_MEMORIES_CONTAINER") or "memories"
+    cosmos_turns_container = os.environ.get("COSMOS_TURNS_CONTAINER") or "memories_turns"
+    cosmos_summaries_container = (
+        os.environ.get("COSMOS_SUMMARIES_CONTAINER") or "memories_summaries"
+    )
+    cosmos_counter_container = os.environ.get("COSMOS_COUNTER_CONTAINER") or "counter"
+
     client_kwargs = dict(
+        cosmos_endpoint=cosmos_endpoint,
         cosmos_database=cosmos_database,
+        cosmos_container=cosmos_container,
+        cosmos_turns_container=cosmos_turns_container,
+        cosmos_summaries_container=cosmos_summaries_container,
+        cosmos_counter_container=cosmos_counter_container,
         ai_foundry_endpoint=ai_foundry_endpoint,
         chat_deployment_name=chat_deployment,
         embedding_deployment_name=embedding_deployment,
@@ -56,7 +65,7 @@ async def _create_memory_client() -> AsyncCosmosMemoryClient:
         client_kwargs["cosmos_key"] = cosmos_key
 
     client = AsyncCosmosMemoryClient(**client_kwargs)
-    await client.connect_cosmos(endpoint=cosmos_endpoint)
+    await client.connect_cosmos()
     return client
 
 
@@ -71,6 +80,6 @@ async def get_memory_client() -> AsyncCosmosMemoryClient:
                     _client = await _create_memory_client()
                 except Exception as exc:  # noqa: BLE001
                     raise RuntimeError(
-                        f"agent_memory_toolkit failed to connect: {exc}"
+                        f"azure-cosmos-agent-memory failed to connect: {exc}"
                     ) from exc
     return _client

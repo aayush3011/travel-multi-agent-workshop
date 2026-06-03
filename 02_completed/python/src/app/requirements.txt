@@ -122,9 +122,7 @@ yarl==1.18.3
 zipp==3.23.0
 zstandard==0.23.0
 
-# AgentMemoryToolkit — vendored wheel (built from
-# https://github.com/AzureCosmosDB/AgentMemoryToolkit). Required by the
-# agent_memory.py wrapper. Path is relative to this requirements file:
-# 02_completed/python/src/app/requirements.txt → ../../../vendor/…
+# Azure Cosmos DB Agent Memory — PyPI package
+# https://pypi.org/project/azure-cosmos-agent-memory/
 prompty>=2.0.0a9
-../../../vendor/agent_memory_toolkit-0.1.0-py3-none-any.whl
+ azure-cosmos-agent-memory>=0.1.0b2

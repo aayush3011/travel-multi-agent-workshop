@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from typing import Optional
 
-from agent_memory_toolkit.aio import AsyncCosmosMemoryClient
+from azure.cosmos.agent_memory.aio import AsyncCosmosMemoryClient
 
 _CACHE: dict[str, tuple[float, Optional[dict]]] = {}
 _TTL_SEC = 30

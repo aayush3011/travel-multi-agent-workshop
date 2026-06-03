@@ -12,8 +12,8 @@ param debugLogsContainerName string
 param checkpointsContainerName string
 param tripsByDestinationContainerName string
 param memoriesContainerName string = 'memories'
-param counterContainerName string = 'counter'
-param leasesContainerName string = 'leases'
+param turnsContainerName string = 'memories_turns'
+param summariesContainerName string = 'memories_summaries'
 @description('Embedding dimensions for the memories container vector index. Must match the embedding model used by AgentMemoryToolkit (text-embedding-3-small = 1536).')
 param memoriesEmbeddingDimensions int = 1536
 param location string = resourceGroup().location
@@ -125,7 +125,7 @@ resource cosmosContainerMessages 'Microsoft.DocumentDB/databaseAccounts/sqlDatab
         ]
       }
       vectorEmbeddingPolicy: {
-        vectorEmbeddings: [ { path: '/embedding', dataType: 'float32', distanceFunction: 'cosine', dimensions: 1024 } ]
+        vectorEmbeddings: [ { path: '/embedding', dataType: 'float32', distanceFunction: 'cosine', dimensions: 1536 } ]
       }
       fullTextPolicy: {
         defaultLanguage: 'en-US'
@@ -169,7 +169,7 @@ resource cosmosContainerPlaces 'Microsoft.DocumentDB/databaseAccounts/sqlDatabas
         ]
       }
       vectorEmbeddingPolicy: {
-        vectorEmbeddings: [ { path: '/embedding', dataType: 'float32', distanceFunction: 'cosine', dimensions: 1024 } ]
+        vectorEmbeddings: [ { path: '/embedding', dataType: 'float32', distanceFunction: 'cosine', dimensions: 1536 } ]
       }
       fullTextPolicy: {
         defaultLanguage: 'en-US'
@@ -399,46 +399,68 @@ resource cosmosContainerMemories 'Microsoft.DocumentDB/databaseAccounts/sqlDatab
   tags: tags
 }
 
-// Container 10: Counter (AgentMemoryToolkit per-(user, thread) turn counts)
-resource cosmosContainerCounter 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-12-01-preview' = {
+// Container 10: Memories Turns (AgentMemoryToolkit turn documents)
+// Partition Key: [/user_id, /thread_id] (hierarchical, MultiHash)
+// TTL: 30 days (2592000 seconds)
+resource cosmosContainerMemoriesTurns 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-12-01-preview' = {
   parent: database
-  name: counterContainerName
+  name: turnsContainerName
   properties: {
     resource: {
-      id: counterContainerName
+      id: turnsContainerName
       partitionKey: {
         paths: [ '/user_id', '/thread_id' ]
         kind: 'MultiHash'
         version: 2
       }
+      defaultTtl: 2592000
       indexingPolicy: {
         indexingMode: 'consistent'
         automatic: true
         includedPaths: [ { path: '/*' } ]
-        excludedPaths: [ { path: '/"_etag"/?' } ]
+        excludedPaths: [
+          { path: '/"_etag"/?' }
+          { path: '/embedding/?' }
+          { path: '/source_memory_ids/*' }
+          { path: '/supersedes_ids/*' }
+        ]
       }
     }
   }
   tags: tags
 }
 
-// Container 11: Leases (AgentMemoryToolkit background-processing leases)
-resource cosmosContainerLeases 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-12-01-preview' = {
+// Container 11: Memories Summaries (AgentMemoryToolkit thread/user summaries)
+// Partition Key: [/user_id, /thread_id] (hierarchical, MultiHash)
+resource cosmosContainerMemoriesSummaries 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-12-01-preview' = {
   parent: database
-  name: leasesContainerName
+  name: summariesContainerName
   properties: {
     resource: {
-      id: leasesContainerName
+      id: summariesContainerName
       partitionKey: {
-        paths: [ '/id' ]
-        kind: 'Hash'
+        paths: [ '/user_id', '/thread_id' ]
+        kind: 'MultiHash'
         version: 2
       }
+      defaultTtl: -1
       indexingPolicy: {
         indexingMode: 'consistent'
         automatic: true
         includedPaths: [ { path: '/*' } ]
-        excludedPaths: [ { path: '/"_etag"/?' } ]
+        excludedPaths: [
+          { path: '/"_etag"/?' }
+          { path: '/embedding/?' }
+          { path: '/source_memory_ids/*' }
+          { path: '/supersedes_ids/*' }
+        ]
+        compositeIndexes: [
+          [
+            { path: '/user_id', order: 'ascending' }
+            { path: '/thread_id', order: 'ascending' }
+            { path: '/version', order: 'descending' }
+          ]
+        ]
       }
     }
   }

@@ -34,7 +34,7 @@ load_dotenv()
 # ============================================================================
 
 COSMOS_ENDPOINT = os.getenv("COSMOSDB_ENDPOINT")
-DATABASE_NAME = os.getenv("COSMOS_DB_DATABASE_NAME", "TravelAssistant")
+DATABASE_NAME = os.getenv("COSMOSDB_DATABASE_NAME", "TravelAssistant")
 TRIPS_CONTAINER_NAME = "Trips"
 
 # ARM management plane config (for throughput scaling)

@@ -79,7 +79,7 @@ The frontend communicates with the FastAPI backend via the `TravelApiService`:
 
 ### Memory layer
 
-Memory is provided by the `agent_memory_toolkit` SDK in the backend. During workshop development it is installed as an editable dependency pointing at `../AgentMemoryToolkit` (TODO: switch to the published PyPI package). The toolkit auto-creates the Cosmos DB `memories`, `counter`, and `leases` containers on first run; every 10 chat turns a background auto-flush produces summaries, facts, and `user_summary`. Memory records are partitioned by `(user_id, thread_id)`, not `tenantId`, and the memory prompts now ship inside the toolkit instead of this repo.
+Memory is provided by the [`azure-cosmos-agent-memory`](https://pypi.org/project/azure-cosmos-agent-memory/) SDK in the backend. The toolkit auto-creates the Cosmos DB `memories`, `memories_turns`, and `memories_summaries` containers on first run; every 10 chat turns a background auto-flush produces summaries, facts, and `user_summary`. Memory records are partitioned by `(user_id, thread_id)`, not `tenantId`, and the memory prompts now ship inside the toolkit instead of this repo.
 
 ### State Management
 

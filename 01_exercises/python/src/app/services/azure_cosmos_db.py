@@ -19,8 +19,8 @@ load_dotenv(override=False)
 
 # Azure Cosmos DB configuration
 COSMOS_DB_URL = os.getenv("COSMOSDB_ENDPOINT")
-COSMOS_DB_KEY = os.getenv("COSMOS_KEY")
-DATABASE_NAME = os.getenv("COSMOS_DB_DATABASE_NAME", "TravelAssistant")
+COSMOS_DB_KEY = os.getenv("COSMOSDB_KEY")
+DATABASE_NAME = os.getenv("COSMOSDB_DATABASE_NAME", "TravelAssistant")
 checkpoint_container = "Checkpoints"
 
 # Global client variables
