@@ -19,8 +19,8 @@ load_dotenv(override=False)
 
 # Azure Cosmos DB configuration
 COSMOS_DB_URL = os.getenv("COSMOSDB_ENDPOINT")
-COSMOS_DB_KEY = os.getenv("COSMOS_KEY")
-DATABASE_NAME = os.getenv("COSMOS_DB_DATABASE_NAME", "TravelAssistant")
+COSMOS_DB_KEY = os.getenv("COSMOSDB_KEY")
+DATABASE_NAME = os.getenv("COSMOSDB_DATABASE_NAME", "TravelAssistant")
 checkpoint_container = "Checkpoints"
 
 # Global client variables
@@ -416,7 +416,8 @@ def query_places_hybrid(
     dietary: Optional[List[str]] = None,
     accessibility: Optional[List[str]] = None,
     price_tier: Optional[str] = None,
-    limit: int = 5
+    limit: int = 5,
+    user_preference_vector: list[float] | None = None
 ) -> List[Dict[str, Any]]:
     """Query places with filters including array-based filters (dietary, accessibility, tags)"""
     logger.info(f"🔍 ========== QUERY_PLACES CALLED ==========")
@@ -476,6 +477,17 @@ def query_places_hybrid(
     
     # Always include VectorDistance
     fulltext_clauses.append("VectorDistance(c.embedding, @embedding)")
+    if user_preference_vector is not None:
+        # Places embeddings are 1536-dim; user_preference_vector from toolkit
+        # may be 1536-dim. Only include in RRF if dimensions match.
+        if len(user_preference_vector) == len(embedding):
+            fulltext_clauses.append("VectorDistance(c.embedding, @pref_vector)")
+            params.append({"name": "@pref_vector", "value": user_preference_vector})
+        else:
+            logger.warning(
+                "Skipping user_preference_vector in RRF: dim %d != places dim %d",
+                len(user_preference_vector), len(embedding),
+            )
     
     rrf_clause = ", ".join(fulltext_clauses)
     

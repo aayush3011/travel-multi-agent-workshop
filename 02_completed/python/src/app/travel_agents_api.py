@@ -2,15 +2,17 @@ import os
 import sys
 import uuid
 import asyncio
+import json
 from pathlib import Path
 
 import fastapi
 from dotenv import load_dotenv
 from datetime import datetime
-from fastapi import BackgroundTasks, Depends, HTTPException, Body, Response
-from langchain_core.messages import HumanMessage, ToolMessage, AIMessage
+from fastapi import BackgroundTasks, HTTPException, Body, Response
+from fastapi.responses import StreamingResponse
+from langchain_core.messages import HumanMessage, ToolMessage, AIMessage, SystemMessage
 from pydantic import BaseModel
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, AsyncIterator
 from enum import Enum
 from starlette.middleware.cors import CORSMiddleware
 from azure.cosmos.exceptions import CosmosHttpResponseError
@@ -46,8 +48,14 @@ from src.app.services.azure_cosmos_db import (
     create_user, get_all_users, get_user_by_id,
     store_debug_log, get_debug_log, query_debug_logs
 )
-from src.app.travel_agents import setup_agents, build_agent_graph, cleanup_persistent_session
+from src.app.travel_agents import (
+    setup_agents,
+    build_agent_graph,
+    cleanup_persistent_session,
+    _current_user_preference_vector,
+)
 from src.app.services.agent_memory import get_memory_client
+from src.app.services.user_summary_cache import get_cached_user_summary, invalidate_user_summary
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -245,8 +253,10 @@ app = fastapi.FastAPI(
 
 # Global flag to track agent initialization
 _agents_initialized = False
+_init_lock = asyncio.Lock()
 _graph = None
 _checkpointer = None
+_background_tasks: set[asyncio.Task] = set()
 
 # Agent name mapping (for consistent display)
 agent_mapping = {
@@ -271,9 +281,9 @@ async def initialize_agents():
     for attempt in range(max_retries):
         try:
             logger.info(f"Attempt {attempt + 1}/{max_retries}: Initializing agents...")
-            await setup_agents()
-            _graph = build_agent_graph()
             _checkpointer = get_checkpoint_saver()
+            await setup_agents(checkpointer=_checkpointer)
+            _graph = build_agent_graph()
             _agents_initialized = True
             logger.info("✅ Agents initialized successfully!")
             return
@@ -320,13 +330,18 @@ async def ensure_agents_initialized():
     """Ensure agents are initialized before handling requests"""
     global _agents_initialized
 
-    if not _agents_initialized:
+    if _agents_initialized:
+        return
+
+    async with _init_lock:
+        if _agents_initialized:
+            return
         logger.info("🔄 Initializing agents on demand...")
         try:
-            await setup_agents()
             global _graph, _checkpointer
-            _graph = build_agent_graph()
             _checkpointer = get_checkpoint_saver()
+            await setup_agents(checkpointer=_checkpointer)
+            _graph = build_agent_graph()
             _agents_initialized = True
             logger.info("✅ Agents initialized successfully!")
         except Exception as e:
@@ -345,6 +360,271 @@ def get_compiled_graph():
             detail="Agents not initialized. Please wait for service startup to complete."
         )
     return _graph
+
+
+def trim_history(messages: list, keep_pairs: int = 10) -> list:
+    pairs = []
+    current = []
+    for message in messages:
+        current.append(message)
+        if isinstance(message, AIMessage) and not getattr(message, "tool_calls", None):
+            pairs.append(current)
+            current = []
+    kept = pairs[-keep_pairs:]
+    return [message for pair in kept for message in pair]
+
+
+def _message_content_to_text(content: Any) -> str:
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                parts.append(str(item.get("text") or item.get("content") or ""))
+            else:
+                parts.append(str(item))
+        return "".join(parts)
+    return str(content)
+
+
+def _last_ai_text_from_value(value: Any) -> str:
+    if isinstance(value, AIMessage):
+        return _message_content_to_text(value.content).strip()
+    if isinstance(value, dict):
+        messages = value.get("messages")
+        if isinstance(messages, list):
+            for message in reversed(messages):
+                text = _last_ai_text_from_value(message)
+                if text:
+                    return text
+        for item in value.values():
+            text = _last_ai_text_from_value(item)
+            if text:
+                return text
+    if isinstance(value, list):
+        for item in reversed(value):
+            text = _last_ai_text_from_value(item)
+            if text:
+                return text
+    return ""
+
+
+def _extract_checkpoint_messages(checkpoint: Any) -> list:
+    checkpoint_data = getattr(checkpoint, "checkpoint", checkpoint)
+    if not isinstance(checkpoint_data, dict):
+        return []
+
+    messages = checkpoint_data.get("messages")
+    if isinstance(messages, list):
+        return messages
+
+    channel_values = checkpoint_data.get("channel_values")
+    if isinstance(channel_values, dict):
+        messages = channel_values.get("messages")
+        if isinstance(messages, list):
+            return messages
+
+    return []
+
+
+async def _load_checkpoint_history(config: dict) -> list:
+    if _checkpointer is None or not hasattr(_checkpointer, "list"):
+        return []
+
+    try:
+        checkpoints = await asyncio.to_thread(lambda: list(_checkpointer.list(config)))
+    except Exception as exc:
+        logger.warning("failed to load checkpoint history for trim: %s", exc)
+        return []
+
+    if not checkpoints:
+        return []
+    return _extract_checkpoint_messages(checkpoints[-1])
+
+
+async def _recall_memory_context(
+    client: Any,
+    user_id: str,
+    query: str,
+    top_k: int = 5,
+) -> str:
+    """Pre-fetch durable memories relevant to the user's current message.
+
+    Returns a compact bullet list of fact / episodic / procedural memories that the
+    supervisor can read as authoritative context for this turn. Excludes raw 'turn'
+    records (they're noisy and already covered by checkpoint history). Empty string
+    on no hits or any error -- this path must never break the chat request.
+    """
+    if not user_id or not query:
+        return ""
+    try:
+        hits = await client.search_cosmos(
+            search_terms=query,
+            user_id=user_id,
+            hybrid_search=True,
+            top_k=top_k,
+            memory_types=["fact", "episodic", "procedural"],
+        )
+    except Exception as exc:
+        logger.warning(
+            "recall pre-fetch failed for user=%s query=%r: %s",
+            user_id, query, exc,
+        )
+        return ""
+    if not hits:
+        return ""
+
+    lines: list[str] = []
+    for hit in hits:
+        content = (hit.get("content") or "").strip()
+        if not content:
+            continue
+        mtype = hit.get("type") or hit.get("memory_type") or "memory"
+        tag_parts: list[str] = [str(mtype)]
+        if mtype == "episodic":
+            metadata = hit.get("metadata") or {}
+            scope_type = (metadata.get("scope_type") or "").strip()
+            scope_value = (metadata.get("scope_value") or "").strip()
+            if scope_type and scope_value:
+                tag_parts.append(f"scope: {scope_type}={scope_value}")
+        salience = hit.get("salience")
+        if isinstance(salience, (int, float)):
+            tag_parts.append(f"salience {salience:.2f}")
+        lines.append(f"- [{', '.join(tag_parts)}] {content}")
+    return "\n".join(lines)
+
+
+async def _build_initial_messages(
+    user_id: str,
+    user_message: str,
+    history_messages: Optional[list] = None,
+    client: Any | None = None,
+) -> tuple[list, list[float] | None]:
+    memory_client = client or await get_memory_client()
+    summary_doc, memory_context = await asyncio.gather(
+        get_cached_user_summary(memory_client, user_id),
+        _recall_memory_context(memory_client, user_id, user_message),
+    )
+    summary_text = (summary_doc or {}).get("content") or ""
+    pref_vector = (summary_doc or {}).get("embedding")
+    if not isinstance(pref_vector, list):
+        pref_vector = None
+
+    messages: list[Any] = []
+    if summary_text:
+        messages.append(SystemMessage(
+            content=(
+                "## What we know about this traveller\n"
+                + summary_text
+            ),
+            id="user_summary",
+        ))
+    if memory_context:
+        messages.append(SystemMessage(
+            content=(
+                "## Relevant memories for this request\n"
+                + memory_context
+            ),
+            id="recalled_memories",
+        ))
+    if history_messages:
+        messages.extend(history_messages)
+    messages.append(HumanMessage(content=user_message))
+    return messages, pref_vector
+
+
+def _thread_config(tenant_id: str, user_id: str, thread_id: str, pref_vector: list[float] | None = None) -> dict:
+    configurable = {
+        "thread_id": thread_id,
+        "checkpoint_ns": "",
+        "user_id": user_id,
+        "userId": user_id,
+        "tenant_id": tenant_id,
+        "tenantId": tenant_id,
+    }
+    if pref_vector is not None:
+        configurable["user_preference_vector"] = pref_vector
+    return {"configurable": configurable}
+
+
+def _sse(data: dict) -> str:
+    return f"data: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
+
+
+async def _flush_memory_bg(client: Any, user_id: str, thread_id: str):
+    try:
+        # Canonical toolkit path: flushes locally-buffered turns to Cosmos AND
+        # writes per-(user, thread) counts to the `counter` container, then
+        # schedules cadence-driven processing (fact extraction, dedup, thread
+        # summary, user summary) per FACT_EXTRACTION_EVERY_N / DEDUP_EVERY_N /
+        # THREAD_SUMMARY_EVERY_N / USER_SUMMARY_EVERY_N env vars.
+        await client.push_to_cosmos()
+    except Exception as exc:
+        logger.warning(
+            "background memory flush failed for user=%s thread=%s: %s",
+            user_id,
+            thread_id,
+            exc,
+        )
+    finally:
+        invalidate_user_summary(user_id)
+
+
+def _build_message_model(
+    session_id: str,
+    tenant_id: str,
+    user_id: str,
+    role: str,
+    text: str,
+    debug_log_id: str = "",
+) -> MessageModel:
+    return MessageModel(
+        id=str(uuid.uuid4()),
+        type="message",
+        sessionId=session_id,
+        tenantId=tenant_id,
+        userId=user_id,
+        timeStamp=datetime.utcnow().isoformat(),
+        sender="User" if role == "user" else "Assistant",
+        senderRole="User" if role == "user" else "Assistant",
+        text=text,
+        debugLogId=debug_log_id,
+        tokensUsed=0,
+        rating=None,
+    )
+
+
+def _persist_chat_turn_messages(
+    session_id: str,
+    tenant_id: str,
+    user_id: str,
+    user_message: str,
+    assistant_message: str,
+):
+    message_count = 0
+    append_message(
+        session_id=session_id,
+        tenant_id=tenant_id,
+        user_id=user_id,
+        role="user",
+        content=user_message,
+    )
+    message_count += 1
+    if assistant_message:
+        append_message(
+            session_id=session_id,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            role="assistant",
+            content=assistant_message,
+        )
+        message_count += 1
+    update_session_activity(session_id, tenant_id, user_id, message_count=message_count)
 
 
 # Add CORS middleware
@@ -688,16 +968,19 @@ def store_debug_log_from_response(sessionId: str, tenantId: str, userId: str, re
                         logprobs = metadata.get("logprobs", logprobs)
                         content_filter_results = metadata.get("content_filter_results", content_filter_results)
                         
-                        # Check for tool calls (agent transfers)
+                        # Check for tool calls made by the supervisor or sub-agents
                         if hasattr(msg, 'additional_kwargs') and "tool_calls" in msg.additional_kwargs:
                             msg_tool_calls = msg.additional_kwargs["tool_calls"]
                             tool_calls.extend(msg_tool_calls)
-                            transfer_success = any(
-                                call.get("name", "").startswith("transfer_to_") for call in msg_tool_calls
-                            )
-                            if transfer_success and tool_calls:
+                            if msg_tool_calls:
                                 previous_agent = agent_selected
-                                agent_selected = tool_calls[-1].get("name", "").replace("transfer_to_", "")
+                                last_tool_call = msg_tool_calls[-1]
+                                agent_selected = (
+                                    last_tool_call.get("name")
+                                    or last_tool_call.get("function", {}).get("name")
+                                    or "tool"
+                                )
+                                transfer_success = True
     
     # Store in Cosmos DB using the new function
     try:
@@ -914,6 +1197,112 @@ async def _post_response_background(sessionId: str, tenantId: str, userId: str, 
     logger.info(f"✅ Background processing complete for session {sessionId}")
 
 
+async def chat_event_generator(
+    tenant_id: str,
+    user_id: str,
+    thread_id: str,
+    user_message: str,
+) -> AsyncIterator[dict]:
+    workflow = get_compiled_graph()
+    client = await get_memory_client()
+
+    base_config = _thread_config(tenant_id, user_id, thread_id)
+    checkpoint_history = trim_history(await _load_checkpoint_history(base_config))
+    messages, pref_vector = await _build_initial_messages(
+        user_id,
+        user_message,
+        history_messages=checkpoint_history,
+        client=client,
+    )
+    config = _thread_config(tenant_id, user_id, thread_id, pref_vector)
+
+    client.add_local(
+        user_id=user_id,
+        thread_id=thread_id,
+        role="user",
+        content=user_message,
+        memory_type="turn",
+    )
+
+    accumulated: list[str] = []
+    last_output_text = ""
+    token = _current_user_preference_vector.set(pref_vector)
+    try:
+        async for event in workflow.astream_events(
+            {"messages": messages},
+            config=config,
+            version="v2",
+        ):
+            kind = event.get("event")
+            if kind == "on_tool_start":
+                yield {
+                    "event": "tool_call_start",
+                    "tool": event.get("name"),
+                    "args": event.get("data", {}).get("input"),
+                }
+            elif kind == "on_tool_end":
+                yield {"event": "tool_call_done", "tool": event.get("name")}
+            elif kind == "on_chain_start":
+                node_name = event.get("name")
+                if node_name in ("supervisor", "find_places", "create_or_update_itinerary"):
+                    yield {"event": "thinking", "node": node_name}
+            elif kind == "on_chat_model_stream":
+                chunk = event.get("data", {}).get("chunk")
+                delta = _message_content_to_text(getattr(chunk, "content", ""))
+                if delta:
+                    accumulated.append(delta)
+                    yield {"event": "token", "delta": delta}
+            elif kind == "on_chain_end":
+                candidate = _last_ai_text_from_value(event.get("data", {}).get("output"))
+                if candidate:
+                    last_output_text = candidate
+    finally:
+        _current_user_preference_vector.reset(token)
+
+    if not accumulated and last_output_text:
+        yield {"event": "token", "delta": last_output_text}
+
+    final_text = "".join(accumulated).strip() or last_output_text
+    if final_text:
+        try:
+            client.add_local(
+                user_id=user_id,
+                thread_id=thread_id,
+                role="agent",
+                content=final_text,
+                memory_type="turn",
+            )
+        except Exception as exc:
+            logger.warning("turn capture (agent) failed: %s", exc)
+
+    try:
+        await asyncio.to_thread(
+            _persist_chat_turn_messages,
+            thread_id,
+            tenant_id,
+            user_id,
+            user_message,
+            final_text,
+        )
+    except Exception as exc:
+        logger.warning("chat message persistence failed: %s", exc)
+
+    task = asyncio.create_task(_flush_memory_bg(client, user_id, thread_id))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    yield {"event": "done", "thread_id": thread_id}
+
+
+async def chat_stream_generator(
+    tenant_id: str,
+    user_id: str,
+    thread_id: str,
+    user_message: str,
+) -> AsyncIterator[str]:
+    async for event in chat_event_generator(tenant_id, user_id, thread_id, user_message):
+        yield _sse(event)
+
+
 @app.post(
     "/tenant/{tenantId}/user/{userId}/sessions/{sessionId}/completion",
     tags=[CHAT_TAG],
@@ -927,95 +1316,58 @@ async def get_chat_completion(
     sessionId: str,
     background_tasks: BackgroundTasks,
     request_body: str = Body(..., media_type="application/json"),
-    workflow = Depends(get_compiled_graph)
 ):
-    """
-    Send a message and receive AI response from the multi-agent system.
-    
-    This endpoint:
-    1. Resumes conversation from last checkpoint
-    2. Routes message through orchestrator to appropriate agent
-    3. Stores messages in Cosmos DB
-    4. Returns user message + agent response
-    
-    Args:
-        tenantId: Tenant identifier
-        userId: User identifier
-        sessionId: Session identifier
-        request_body: User message as plain text string
-    
-    Returns:
-        List of MessageModel objects (user message + agent response)
-    """
-    # Ensure agents are initialized
+    """Send a message and receive a non-streamed supervisor response."""
     await ensure_agents_initialized()
-    
+
     if not request_body.strip():
         raise HTTPException(status_code=400, detail="Request body cannot be empty")
-    
+
     try:
-        # Configuration for LangGraph
-        config = {
-            "configurable": {
-                "thread_id": sessionId,
-                "checkpoint_ns": "",
-                "userId": userId,
-                "tenantId": tenantId
-            }
-        }
-        
-        # Retrieve last checkpoint
-        checkpoints = list(_checkpointer.list(config))
-        last_active_agent = "orchestrator"
-        
-        if not checkpoints:
-            # No previous state - start fresh
-            new_state = {"messages": [{"role": "user", "content": request_body}]}
-            response_data = await workflow.ainvoke(new_state, config, stream_mode="updates")
-        else:
-            # Resume from last checkpoint
-            last_checkpoint = checkpoints[-1]
-            last_state = last_checkpoint.checkpoint
-            
-            if "messages" not in last_state:
-                last_state["messages"] = []
-            
-            last_state["messages"].append({"role": "user", "content": request_body})
-            
-            # Get active agent from state
-            if "channel_versions" in last_state:
-                for channel, version in last_state["channel_versions"].items():
-                    if channel != "__start__" and version > 0:
-                        last_active_agent = channel
-                        break
-            
-            response_data = await workflow.ainvoke(last_state, config, stream_mode="updates")
-        
-        # Generate debug log ID upfront so it's available in the response
         debug_log_id = str(uuid.uuid4())
-        
-        # Extract messages (lightweight — just parses response_data)
-        messages = extract_relevant_messages(
-            debug_log_id, last_active_agent, response_data, 
-            tenantId, userId, sessionId
-        )
-        
-        # Build response immediately from extracted messages
-        response_models = [msg_model for msg_model, _ in messages]
-        
-        # Offload ALL storage to background (debug log, messages, agent patch)
-        background_tasks.add_task(
-            _post_response_background,
-            sessionId, tenantId, userId, response_data, messages, debug_log_id
-        )
-        
+        assistant_chunks: list[str] = []
+        async for event in chat_event_generator(tenantId, userId, sessionId, request_body):
+            if event.get("event") == "token":
+                assistant_chunks.append(event.get("delta", ""))
+
+        response_models = [
+            _build_message_model(sessionId, tenantId, userId, "user", request_body, debug_log_id)
+        ]
+        assistant_text = "".join(assistant_chunks).strip()
+        if assistant_text:
+            response_models.append(
+                _build_message_model(sessionId, tenantId, userId, "assistant", assistant_text, debug_log_id)
+            )
         return response_models
 
     except Exception as e:
         logger.error(f"Error in chat completion: {e}")
-        import traceback
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Chat completion failed: {str(e)}")
+
+
+@app.post(
+    "/tenant/{tenantId}/user/{userId}/sessions/{sessionId}/completion/stream",
+    tags=[CHAT_TAG],
+    summary="Streaming Chat Completion",
+    description="Stream supervisor response tokens and tool progress over Server-Sent Events",
+)
+async def stream_chat_completion(
+    tenantId: str,
+    userId: str,
+    sessionId: str,
+    request_body: str = Body(..., media_type="application/json"),
+):
+    await ensure_agents_initialized()
+
+    if not request_body.strip():
+        raise HTTPException(status_code=400, detail="Request body cannot be empty")
+
+    return StreamingResponse(
+        chat_stream_generator(tenantId, userId, sessionId, request_body),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.post(
@@ -1227,7 +1579,7 @@ def delete_trip_endpoint(tenantId: str, userId: str, tripId: str):
     description="Retrieve toolkit memories for a user; searches when q is supplied, otherwise lists recent memories",
     response_model=List[Dict[str, Any]]
 )
-def get_user_memories(
+async def get_user_memories(
     user_id: str,
     q: Optional[str] = None,
     thread_id: Optional[str] = None,
@@ -1235,16 +1587,16 @@ def get_user_memories(
 ):
     """Get toolkit-backed memories for a user."""
     try:
-        client = get_memory_client()
+        client = await get_memory_client()
         if q and q.strip():
-            return client.search_cosmos(
+            return await client.search_cosmos(
                 search_terms=q,
                 user_id=user_id,
                 thread_id=thread_id,
                 top_k=top_k,
             )
 
-        return client.get_memories(
+        return await client.get_memories(
             user_id=user_id,
             thread_id=thread_id,
             recent_k=top_k,
@@ -1261,13 +1613,14 @@ def get_user_memories(
     description="Delete a toolkit memory for a user and thread",
     status_code=204
 )
-def delete_memory(user_id: str, memory_id: str, thread_id: Optional[str] = None):
+async def delete_memory(user_id: str, memory_id: str, thread_id: Optional[str] = None):
     """Delete a toolkit-backed memory."""
     if not thread_id:
         raise HTTPException(status_code=400, detail="thread_id is required")
 
     try:
-        get_memory_client().delete_cosmos(
+        client = await get_memory_client()
+        await client.delete_cosmos(
             memory_id=memory_id,
             thread_id=thread_id,
             user_id=user_id,
@@ -1285,11 +1638,11 @@ def delete_memory(user_id: str, memory_id: str, thread_id: Optional[str] = None)
     description="Retrieve the latest toolkit-generated cross-thread user summary",
     response_model=Optional[Dict[str, Any]]
 )
-def get_user_summary_endpoint(user_id: str):
+async def get_user_summary_endpoint(user_id: str):
     """Get the latest toolkit-backed user summary, or null if absent."""
     try:
-        summaries = get_memory_client().get_user_summary(user_id)
-        return summaries[0] if summaries else None
+        client = await get_memory_client()
+        return await get_cached_user_summary(client, user_id)
     except Exception as e:
         logger.error(f"Error fetching user summary: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to fetch user summary: {str(e)}")

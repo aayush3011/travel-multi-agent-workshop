@@ -141,7 +141,7 @@ def generate_embedding(text: str) -> List[float]:
         response = openai_client.embeddings.create(
             input=text,
             model=AZURE_OPENAI_EMBEDDING_DEPLOYMENT,
-            dimensions=1024,
+            dimensions=1536,
         )
         json_response = response.model_dump_json(indent=2)
         parsed_response = json.loads(json_response)

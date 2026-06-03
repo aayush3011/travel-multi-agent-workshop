@@ -1,792 +1,232 @@
 #!/usr/bin/env python3
 """
-Travel Assistant Cosmos DB Seeding Script
+Travel Assistant Cosmos DB Seeding Script.
 
-This script:
-1. Creates the Cosmos DB database (if it doesn't exist)
-2. Creates all required containers with proper indexing policies
-3. Loads data from JSON files in the data/ directory:
-   - users.json (4 users)
-   - memories.json (10 memories)
-   - places.json (1,700 places across 35 cities)
-   - trips.json (5 sample trips)
+Seeds JSON data into existing Cosmos DB containers (created by ``azd up`` /
+the Bicep templates under ``infra/``). This script does NOT create containers
+and does NOT call any LLM — embeddings are pre-baked into the JSON files so
+the seed is fully offline and deterministic.
 
-Container List:
-- Sessions
-- Messages (chat messages)
-- Summaries (conversation summaries)
-- Memories (user preferences - loaded from JSON)
-- Places (hotels, restaurants, attractions - loaded from JSON)
-- Trips (trip itineraries - loaded from JSON)
-- Users (user profiles - loaded from JSON)
-- ApiEvents (API call logs)
-- Checkpoints (LangGraph state)
-- Debug (chat completion logs)
+Reads from ``data/``:
+    - users.json                   → Users container
+    - hotels_all_cities.json       → Places container (~490 hotels)
+    - restaurants_all_cities.json  → Places container (~980 restaurants)
+    - activities_all_cities.json   → Places container (~1,470 activities)
+    - trips.json                   → Trips container
+    - turns.json                   → memories_turns container
+    - memories.json                → memories container (toolkit-shape records)
 
-Run: python src/seed_data_new.py
+Run: ``python data/seed_data.py``
 """
 
+import concurrent.futures
 import json
 import os
-import uuid
-import sys
-import asyncio
-import concurrent.futures
-import time
 import random
-from typing import List, Dict, Any
+import time
 from pathlib import Path
+from typing import Any, Dict, List
 
-from azure.cosmos import CosmosClient, PartitionKey
-from azure.cosmos.exceptions import CosmosResourceExistsError, CosmosResourceNotFoundError, CosmosHttpResponseError
+from azure.cosmos import CosmosClient
+from azure.cosmos.exceptions import (
+    CosmosHttpResponseError,
+    CosmosResourceNotFoundError,
+)
 from azure.identity import DefaultAzureCredential
-from openai import AzureOpenAI
 from dotenv import load_dotenv
 
-# Load environment variables
 load_dotenv()
+
 
 # ============================================================================
 # Configuration
 # ============================================================================
 
 COSMOS_ENDPOINT = os.getenv("COSMOSDB_ENDPOINT")
-COSMOS_KEY = os.getenv("COSMOS_KEY")
-DATABASE_NAME = os.getenv("COSMOS_DB_DATABASE_NAME", "TravelAssistant")
+DATABASE_NAME = os.getenv("COSMOSDB_DATABASE_NAME", "TravelAssistant")
 
-# Azure OpenAI configuration
-AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
-AZURE_OPENAI_EMBEDDING_DEPLOYMENT = os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT")
+# Memory container names (env-overridable to match agent_memory.py / toolkit)
+MEMORIES_CONTAINER = os.getenv("COSMOS_MEMORIES_CONTAINER", "memories")
+TURNS_CONTAINER = os.getenv("COSMOS_TURNS_CONTAINER", "memories_turns")
 
-# Vector search configuration
-VECTOR_DIMENSIONS = 1024
-VECTOR_INDEX_TYPE = "diskANN"
-SIMILARITY_METRIC = "cosine"
+# Concurrency / retry knobs (tuned for Cosmos serverless)
+MAX_CONCURRENT_WORKERS = 5
+BATCH_SIZE = 25
+RATE_LIMIT_DELAY = 0.2
+RETRY_MAX_ATTEMPTS = 5
+RETRY_BASE_DELAY = 1.0
 
-# Full-text search configuration
-FULL_TEXT_LOCALE = "en-us"
-
-# Concurrency settings
-MAX_CONCURRENT_WORKERS = 5  # Number of concurrent threads for data processing (reduced for serverless)
-BATCH_SIZE = 25  # Items to process per batch
-EMBEDDING_BATCH_SIZE = 5  # Concurrent embedding generations
-RATE_LIMIT_DELAY = 0.2  # Delay between batches to avoid rate limiting (increased for serverless)
-RETRY_MAX_ATTEMPTS = 5  # Maximum retry attempts for rate limit errors
-RETRY_BASE_DELAY = 1.0  # Base delay for exponential backoff (seconds)
-
-# Data directory
 SCRIPT_DIR = Path(__file__).parent
-DATA_DIR = SCRIPT_DIR.parent / "data"
+DATA_DIR = SCRIPT_DIR
 
 print(f"📂 Data directory: {DATA_DIR}")
 print(f"🌐 Cosmos endpoint: {COSMOS_ENDPOINT}")
-print(f"🤖 Azure OpenAI endpoint: {AZURE_OPENAI_ENDPOINT}")
-print(f"📊 Embedding model: {AZURE_OPENAI_EMBEDDING_DEPLOYMENT}")
+print(f"🗄️  Database: {DATABASE_NAME}")
 
 
 # ============================================================================
-# Retry Mechanism for Rate Limiting
-# ============================================================================
-
-def retry_with_backoff(func):
-    """Decorator to add exponential backoff retry for rate limit errors"""
-    def wrapper(*args, **kwargs):
-        for attempt in range(RETRY_MAX_ATTEMPTS):
-            try:
-                return func(*args, **kwargs)
-            except CosmosHttpResponseError as e:
-                if e.status_code == 429:  # TooManyRequests
-                    if attempt < RETRY_MAX_ATTEMPTS - 1:
-                        # Exponential backoff with jitter
-                        delay = RETRY_BASE_DELAY * (2 ** attempt) + random.uniform(0, 1)
-                        print(f"      ⏱️  Rate limited, retrying in {delay:.1f}s (attempt {attempt + 1}/{RETRY_MAX_ATTEMPTS})...")
-                        time.sleep(delay)
-                        continue
-                    else:
-                        print(f"      ❌ Max retries exceeded for rate limit error")
-                        raise
-                else:
-                    # Non-rate-limit error, don't retry
-                    raise
-            except Exception as e:
-                # Other exceptions, don't retry
-                raise
-        return None
-    return wrapper
-
-
-def upsert_item_with_retry(container, item):
-    """Upsert item with retry mechanism for rate limiting"""
-    @retry_with_backoff
-    def _upsert():
-        return container.upsert_item(item)
-
-    return _upsert()
-
-
-# ============================================================================
-# Azure OpenAI Client Initialization
-# ============================================================================
-
-def get_openai_client() -> AzureOpenAI:
-    """Initialize Azure OpenAI client with Azure AD authentication"""
-    credential = DefaultAzureCredential()
-
-    def token_provider():
-        return credential.get_token("https://cognitiveservices.azure.com/.default").token
-
-    return AzureOpenAI(
-        azure_endpoint=AZURE_OPENAI_ENDPOINT,
-        azure_ad_token_provider=token_provider,
-        api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
-    )
-
-def generate_embedding(text: str) -> List[float]:
-    """Generate embedding for given text using Azure OpenAI"""
-    try:
-        client = get_openai_client()
-        response = client.embeddings.create(
-            input=text,
-            model=AZURE_OPENAI_EMBEDDING_DEPLOYMENT
-        )
-        return response.data[0].embedding
-    except Exception as e:
-        print(f"⚠️ Warning: Could not generate embedding for text: {e}")
-        # Return a dummy embedding of the correct dimension if embedding fails
-        return [0.0] * VECTOR_DIMENSIONS
-
-
-def generate_embeddings_batch(texts: List[str]) -> List[List[float]]:
-    """Generate embeddings for multiple texts in a single API call"""
-    try:
-        client = get_openai_client()
-        response = client.embeddings.create(
-            input=texts,
-            model=AZURE_OPENAI_EMBEDDING_DEPLOYMENT
-        )
-        return [data.embedding for data in response.data]
-    except Exception as e:
-        print(f"⚠️ Warning: Batch embedding generation failed: {e}")
-        # Fallback to individual generation
-        return [generate_embedding(text) for text in texts]
-
-
-def generate_embeddings_concurrent(items: List[Dict[str, Any]], text_field: str) -> List[Dict[str, Any]]:
-    """Generate embeddings for multiple items concurrently using batch processing"""
-    print(f"   🔄 Generating embeddings for {len(items)} items using batch processing...")
-
-    # Filter items that need embeddings
-    items_needing_embeddings = [
-        (idx, item) for idx, item in enumerate(items)
-        if not item.get("embedding") or item["embedding"] == []
-    ]
-
-    if not items_needing_embeddings:
-        print(f"   ✅ All items already have embeddings")
-        return items
-
-    print(f"   📊 {len(items_needing_embeddings)} items need embeddings")
-
-    # Process in batches
-    with concurrent.futures.ThreadPoolExecutor(max_workers=EMBEDDING_BATCH_SIZE) as executor:
-        futures = []
-
-        # Split into batches
-        for i in range(0, len(items_needing_embeddings), BATCH_SIZE):
-            batch = items_needing_embeddings[i:i + BATCH_SIZE]
-            batch_texts = [item[1][text_field] for item in batch]
-
-            future = executor.submit(generate_embeddings_batch, batch_texts)
-            futures.append((future, batch))
-
-            # Add small delay to avoid rate limiting
-            if i > 0:
-                time.sleep(RATE_LIMIT_DELAY)
-
-        # Collect results
-        completed_count = 0
-        for future, batch in futures:
-            try:
-                embeddings = future.result(timeout=60)  # 60 second timeout
-
-                # Apply embeddings to items
-                for (idx, item), embedding in zip(batch, embeddings):
-                    items[idx]["embedding"] = embedding
-                    completed_count += 1
-
-                # Progress update
-                if completed_count % 50 == 0 or completed_count == len(items_needing_embeddings):
-                    print(f"      Progress: {completed_count}/{len(items_needing_embeddings)} embeddings generated")
-
-            except Exception as e:
-                print(f"   ❌ Batch embedding failed: {e}")
-                # Fallback to individual processing for this batch
-                for idx, item in batch:
-                    try:
-                        items[idx]["embedding"] = generate_embedding(item[text_field])
-                        completed_count += 1
-                    except Exception as e2:
-                        print(f"   ❌ Individual embedding failed for item {idx}: {e2}")
-
-    print(f"   ✅ Generated {completed_count} embeddings")
-    return items
-
-
-# ============================================================================
-# Concurrent Data Upload Functions
-# ============================================================================
-
-def upload_items_batch(container, items_batch: List[Dict[str, Any]]) -> tuple:
-    """Upload a batch of items to container with retry mechanism"""
-    success_count = 0
-    error_count = 0
-    errors = []
-
-    for item in items_batch:
-        try:
-            upsert_item_with_retry(container, item)
-            success_count += 1
-        except CosmosHttpResponseError as e:
-            error_count += 1
-            if e.status_code == 429:
-                errors.append(f"Item {item.get('id', 'unknown')}: Rate limit exceeded after retries")
-            else:
-                errors.append(f"Item {item.get('id', 'unknown')}: {str(e)}")
-        except Exception as e:
-            error_count += 1
-            errors.append(f"Item {item.get('id', 'unknown')}: {str(e)}")
-
-    return success_count, error_count, errors
-
-
-def upload_items_concurrent(container, items: List[Dict[str, Any]], item_type: str) -> None:
-    """Upload items to container using concurrent processing"""
-    if not items:
-        print(f"   ⚠️  No {item_type} to upload")
-        return
-
-    print(f"   🚀 Uploading {len(items)} {item_type} using concurrent processing...")
-
-    # Split into batches
-    batches = [items[i:i + BATCH_SIZE] for i in range(0, len(items), BATCH_SIZE)]
-
-    total_success = 0
-    total_errors = 0
-    all_errors = []
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_CONCURRENT_WORKERS) as executor:
-        # Submit all batches with small delays to avoid overwhelming serverless
-        future_to_batch = {}
-        for i, batch in enumerate(batches):
-            # Add progressive delay to avoid thundering herd
-            if i > 0:
-                time.sleep(RATE_LIMIT_DELAY * 2)  # Increased delay for serverless
-            future = executor.submit(upload_items_batch, container, batch)
-            future_to_batch[future] = batch
-
-        # Collect results
-        for future in concurrent.futures.as_completed(future_to_batch):
-            try:
-                success_count, error_count, errors = future.result()
-                total_success += success_count
-                total_errors += error_count
-                all_errors.extend(errors)
-
-                # Progress update
-                if total_success % 100 == 0:
-                    print(f"      Progress: {total_success}/{len(items)} {item_type} uploaded")
-
-            except Exception as e:
-                batch = future_to_batch[future]
-                total_errors += len(batch)
-                all_errors.append(f"Batch upload failed: {str(e)}")
-
-    # Final summary
-    print(f"   ✅ Upload complete: {total_success}/{len(items)} {item_type} uploaded successfully")
-    if total_errors > 0:
-        print(f"   ❌ {total_errors} errors encountered")
-        # Show first few errors
-        for error in all_errors[:3]:
-            print(f"      • {error}")
-        if len(all_errors) > 3:
-            print(f"      • ... and {len(all_errors) - 3} more errors")
-
-# ============================================================================
-# Cosmos DB Client Initialization
+# Cosmos client + upload helpers (concurrent batches with 429 retry)
 # ============================================================================
 
 def get_cosmos_client() -> CosmosClient:
-    """Initialize Cosmos DB client with Azure AD authentication"""
-    credential = DefaultAzureCredential()
-    return CosmosClient(COSMOS_ENDPOINT, credential)
-
-# ============================================================================
-# Container Definitions with Vector + Full-Text Indexing
-# ============================================================================
-
-CONTAINER_CONFIGS = {
-    "Sessions": {
-        "partition_key": ["/tenantId", "/userId", "/sessionId"],
-        "hierarchical": True,
-        "vector_search": False,
-        "full_text_search": False,
-        "description": "Conversation sessions"
-    },
-    "Messages": {
-        "partition_key": ["/tenantId", "/userId", "/sessionId"],
-        "hierarchical": True,
-        "vector_search": True,
-        "full_text_search": True,
-        "vector_paths": ["/embedding"],
-        "full_text_paths": ["/content", "/keywords"],
-        "description": "Chat messages with embeddings"
-    },
-    "Places": {
-        "partition_key": "/geoScopeId",
-        "hierarchical": False,
-        "vector_search": True,
-        "full_text_search": True,
-        "vector_paths": ["/embedding"],
-        "full_text_paths": ["/name", "/description", "/tags"],
-        "description": "Places across cities (hotels, restaurants, attractions)"
-    },
-    "Trips": {
-        "partition_key": ["/tenantId", "/userId", "/tripId"],
-        "hierarchical": True,
-        "vector_search": False,
-        "full_text_search": False,
-        "description": "Trip itineraries and plans"
-    },
-    "Users": {
-        "partition_key": "/userId",
-        "hierarchical": False,
-        "vector_search": False,
-        "full_text_search": False,
-        "description": "User profiles"
-    },
-    "ApiEvents": {
-        "partition_key": ["/tenantId", "/userId", "/sessionId"],
-        "hierarchical": True,
-        "vector_search": False,
-        "full_text_search": False,
-        "description": "External API call logs"
-    },
-    "Debug": {
-        "partition_key": ["/tenantId", "/userId", "/sessionId"],
-        "hierarchical": True,
-        "vector_search": False,
-        "full_text_search": False,
-        "description": "Debug logs for chat completions with token usage and metadata"
-    },
-    "Checkpoints": {
-        "partition_key": "/session_id",
-        "hierarchical": False,
-        "vector_search": False,
-        "full_text_search": False,
-        "description": "LangGraph checkpoints for state persistence"
-    }
-}
+    """Return a Cosmos client authenticated with the local AAD identity."""
+    return CosmosClient(COSMOS_ENDPOINT, DefaultAzureCredential())
 
 
-def create_container_with_indexing(
-        database,
-        container_name: str,
-        config: Dict[str, Any]
-) -> Any:
-    """
-    Create a Cosmos DB container with optional vector and full-text search indexing.
-    
-    Args:
-        database: Cosmos database client
-        container_name: Name of the container
-        config: Container configuration dictionary
-        
-    Returns:
-        Container client object
-    """
-    print(f"\n📦 Creating container: {container_name}")
-    print(f"   Description: {config['description']}")
+def _upsert_with_retry(container, item: Dict[str, Any]) -> None:
+    """Upsert one item, retrying 429 responses with exponential backoff."""
+    for attempt in range(RETRY_MAX_ATTEMPTS):
+        try:
+            container.upsert_item(item)
+            return
+        except CosmosHttpResponseError as exc:
+            if exc.status_code == 429 and attempt < RETRY_MAX_ATTEMPTS - 1:
+                delay = RETRY_BASE_DELAY * (2 ** attempt) + random.uniform(0, 1)
+                print(
+                    f"      ⏱️  Rate limited, retrying in {delay:.1f}s "
+                    f"(attempt {attempt + 1}/{RETRY_MAX_ATTEMPTS})..."
+                )
+                time.sleep(delay)
+                continue
+            raise
 
-    # Build partition key
-    if config["hierarchical"]:
-        partition_key_paths = config["partition_key"]
-        partition_key = PartitionKey(
-            path=partition_key_paths,
-            kind="MultiHash"
-        )
-        print(f"   Partition key: {partition_key_paths} (hierarchical)")
-    else:
-        partition_key = PartitionKey(path=config["partition_key"])
-        print(f"   Partition key: {config['partition_key']}")
 
-    # Build indexing policy
-    indexing_policy = {
-        "automatic": True,
-        "indexingMode": "consistent",
-        "includedPaths": [{"path": "/*"}],
-        "excludedPaths": [{"path": "/\"_etag\"/?"}]
-    }
+def _upload_batch(container, batch: List[Dict[str, Any]]) -> tuple:
+    success = 0
+    errors: List[str] = []
+    for item in batch:
+        try:
+            _upsert_with_retry(container, item)
+            success += 1
+        except Exception as exc:
+            errors.append(f"id={item.get('id', '<?>')}: {exc}")
+    return success, errors
 
-    # Add vector embedding policies
-    vector_embedding_policy = None
-    if config.get("vector_search", False):
-        print(f"   ✅ Vector search enabled (dimensions: {VECTOR_DIMENSIONS})")
-        vector_paths = config.get("vector_paths", ["/embedding"])
-        vector_embedding_policy = {
-            "vectorEmbeddings": [
-                {
-                    "path": path,
-                    "dataType": "float32",
-                    "dimensions": VECTOR_DIMENSIONS,
-                    "distanceFunction": SIMILARITY_METRIC
-                }
-                for path in vector_paths
-            ]
-        }
 
-        # Add vector indexes
-        indexing_policy["vectorIndexes"] = [
-            {
-                "path": path,
-                "type": VECTOR_INDEX_TYPE
-            }
-            for path in vector_paths
-        ]
+def upload_items_concurrent(
+    container,
+    items: List[Dict[str, Any]],
+    label: str,
+) -> None:
+    """Upload ``items`` to ``container`` in concurrent batches."""
+    if not items:
+        print(f"   ⚠️  No {label} to upload")
+        return
 
-    # Add full-text search policies
-    full_text_policy = None
-    if config.get("full_text_search", False):
-        print(f"   ✅ Full-text search enabled (locale: {FULL_TEXT_LOCALE})")
-        full_text_paths = config.get("full_text_paths", [])
-        full_text_policy = {
-            "defaultLanguage": "en-US",
-            "fullTextPaths": [
-                {
-                    "path": path,
-                    "language": "en-US"
-                }
-                for path in full_text_paths
-            ]
-        }
-        indexing_policy["fullTextIndexes"] = [
-            {
-                "path": path,
-                "language": FULL_TEXT_LOCALE
-            }
-            for path in full_text_paths
-        ]
+    print(f"   🚀 Uploading {len(items)} {label}...")
+    batches = [items[i:i + BATCH_SIZE] for i in range(0, len(items), BATCH_SIZE)]
 
-    # Create container
-    try:
-        container = database.create_container(
-            id=container_name,
-            partition_key=partition_key,
-            indexing_policy=indexing_policy,
-            vector_embedding_policy=vector_embedding_policy,
-            full_text_policy=full_text_policy,
-        )
-        print(f"   ✅ Container created successfully")
-        return container
+    total_success = 0
+    all_errors: List[str] = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_CONCURRENT_WORKERS) as executor:
+        futures = []
+        for i, batch in enumerate(batches):
+            if i > 0:
+                time.sleep(RATE_LIMIT_DELAY * 2)  # gentle stagger for serverless
+            futures.append(executor.submit(_upload_batch, container, batch))
+        for future in concurrent.futures.as_completed(futures):
+            ok, errs = future.result()
+            total_success += ok
+            all_errors.extend(errs)
 
-    except CosmosResourceExistsError:
-        print(f"   ⚠️  Container already exists, using existing container")
-        return database.get_container_client(container_name)
+    print(f"   ✅ {total_success}/{len(items)} {label} uploaded")
+    if all_errors:
+        print(f"   ❌ {len(all_errors)} errors")
+        for err in all_errors[:3]:
+            print(f"      • {err}")
+        if len(all_errors) > 3:
+            print(f"      • ... and {len(all_errors) - 3} more")
 
 
 # ============================================================================
-# Database and Container Creation
-# ============================================================================
-
-def create_database_and_containers(client: CosmosClient) -> tuple:
-    """Create database and all containers"""
-    print("\n" + "=" * 70)
-    print("🗄️  DATABASE SETUP")
-    print("=" * 70)
-
-    # Create database
-    try:
-        # Try to get existing database first
-        database = client.get_database_client(DATABASE_NAME)
-        print(f"✅ Using existing database: {DATABASE_NAME}")
-    except CosmosResourceNotFoundError:
-        # Only create if it doesn't exist
-        database = client.create_database(id=DATABASE_NAME)
-        print(f"✅ Created database: {DATABASE_NAME}")
-
-    # Create all containers
-    print("\n" + "=" * 70)
-    print("📦 CONTAINER CREATION")
-    print("=" * 70)
-
-    containers = {}
-    for container_name, config in CONTAINER_CONFIGS.items():
-        container = create_container_with_indexing(database, container_name, config)
-        containers[container_name] = container
-
-    print(f"\n✅ Created/verified {len(containers)} containers")
-    return database, containers
-
-
-# ============================================================================
-# Data Loading Functions
+# JSON loading
 # ============================================================================
 
 def load_json_file(filename: str) -> List[Dict[str, Any]]:
-    """Load data from JSON file"""
-    file_path = DATA_DIR / filename
-
-    if not file_path.exists():
-        print(f"   ⚠️  File not found: {file_path}")
+    """Load a list-of-records JSON file from ``data/``."""
+    path = DATA_DIR / filename
+    if not path.exists():
+        print(f"   ⚠️  File not found: {path}")
         return []
-
     try:
-        with open(file_path, 'r', encoding='utf-8') as f:
+        with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         print(f"   ✅ Loaded {len(data)} items from {filename}")
         return data
-    except Exception as e:
-        print(f"   ❌ Error loading {filename}: {e}")
+    except Exception as exc:
+        print(f"   ❌ Error loading {filename}: {exc}")
         return []
 
 
-def seed_users(container):
-    """Load users from users.json"""
+# ============================================================================
+# Seeders
+# ============================================================================
+
+def seed_users(container) -> None:
     print("\n👤 Seeding USERS...")
-
-    users = load_json_file("users.json")
-
-    if not users:
-        print("   ⚠️  No users to seed")
-        return
-
-    # Upload users concurrently (though users are typically few)
-    upload_items_concurrent(container, users, "users")
-
-    print(f"   ✅ Seeded {len(users)} users")
+    upload_items_concurrent(container, load_json_file("users.json"), "users")
 
 
-SEED_CONVERSATIONS: Dict[str, Dict[str, Any]] = {
-    "tony": {
-        "turns": [
-            ("user", "Hi! I'm planning some travel and wanted to set up my preferences."),
-            ("agent", "Great, Tony! Tell me what kind of travel you usually enjoy and any restrictions I should keep in mind."),
-            ("user", "I prefer luxury 5-star hotels with spa amenities and modern architecture."),
-            ("agent", "Got it — luxury hotels with spa and modern design. Any dietary or accessibility needs?"),
-            ("user", "I'm vegetarian and I avoid seafood entirely."),
-            ("agent", "Understood. Vegetarian, no seafood. Anything else worth remembering about food?"),
-            ("user", "Yes — going forward, whenever you suggest restaurants always include at least two vegetarian-friendly options and never recommend sushi or seafood places."),
-            ("agent", "Got it — that's a standing rule for any restaurant suggestion."),
-            ("user", "I love art museums, contemporary galleries, and street photography."),
-            ("agent", "Noted — art museums, contemporary galleries, and street photography for activities."),
-            ("user", "Last month I tried a budget hotel in Berlin to save money on a work trip — the wifi kept dropping during my video calls and I had to expense a co-working space. Lesson learned: for any business trip, prioritize reliable wifi over price."),
-            ("agent", "Logged — Berlin budget-hotel experience, and the takeaway about prioritizing wifi for business travel."),
-            ("user", "And I usually travel for work, so I prefer rooftop bars and quiet evenings."),
-            ("agent", "Perfect. I'll keep all of that in mind for future trips."),
-        ],
-    },
-    "steve": {
-        "turns": [
-            ("user", "Hey, I want to lock in some travel preferences."),
-            ("agent", "Sure, Steve. What kind of trips do you typically take?"),
-            ("user", "I love hiking, outdoor adventures, and national parks."),
-            ("agent", "Great — outdoor and hiking it is. Any food or accessibility considerations?"),
-            ("user", "I have a peanut allergy, so restaurants need to be peanut-safe."),
-            ("agent", "Important note — peanut allergy, peanut-safe dining required."),
-            ("user", "Make this a hard rule: never recommend any Thai, Indonesian, or Malaysian restaurants for me, since cross-contamination with peanuts is too common."),
-            ("agent", "Understood — that's a standing rule. No Thai, Indonesian, or Malaysian recommendations."),
-            ("user", "For accommodations I prefer boutique hotels or rustic lodges, mid-range budget."),
-            ("agent", "Noted: boutique or rustic lodges, mid-range pricing."),
-            ("user", "Two summers ago I booked a guided multi-day trek in Patagonia with Andes Outfitters. The guide was fantastic and the small-group format was perfect for me — that kind of trip is exactly what I want more of."),
-            ("agent", "Logged — Patagonia trek with Andes Outfitters as a positive reference experience for future trip planning."),
-            ("user", "I usually travel solo and like quiet, off-the-beaten-path destinations."),
-            ("agent", "Understood — solo, quiet, off-the-beaten-path. I'll remember all of that."),
-        ],
-    },
-}
-
-
-def seed_memories():
-    """Seed the toolkit ``memories`` container by replaying realistic
-    conversations through the live AgentMemoryToolkit pipeline.
-
-    For each pre-seeded user we:
-      1. Insert ~10 ``turn`` records via ``add_turn``.
-      2. Call ``flush`` so the toolkit produces a thread ``summary`` plus
-         extracted ``fact`` records (with real embeddings).
-      3. Call ``generate_user_summary`` so a cross-thread ``user_summary``
-         exists for the user.
-
-    Peter and Bruce are intentionally left empty — the workshop modules
-    use those personas for "blank slate" exercises.
-    """
-    print("\n🧠 Seeding MEMORIES (toolkit pipeline)...")
-
-    try:
-        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-        from src.app.services.agent_memory import get_memory_client
-    except Exception as exc:
-        print(f"   ⚠️  Could not import agent_memory.get_memory_client: {exc}")
-        print("   Skipping memory seed (toolkit not available).")
-        return
-
-    try:
-        client = get_memory_client()
-    except Exception as exc:
-        print(f"   ⚠️  Failed to initialize toolkit memory client: {exc}")
-        print("   Skipping memory seed.")
-        return
-
-    seeded_users = 0
-    for user_id, conv in SEED_CONVERSATIONS.items():
-        thread_id = f"session_{uuid.uuid4().hex[:12]}"
-        turns = conv["turns"]
-        print(f"\n   👤 Seeding memories for {user_id} ({len(turns)} turns → {thread_id})")
-
-        try:
-            for role, content in turns:
-                client.add_cosmos(
-                    user_id=user_id,
-                    thread_id=thread_id,
-                    role=role,
-                    content=content,
-                    memory_type="turn",
-                )
-            print(f"      ✅ Added {len(turns)} turn records")
-        except Exception as exc:
-            print(f"      ❌ add_turn failed for {user_id}: {exc}")
-            continue
-
-        try:
-            result = client.process_now(user_id=user_id, thread_id=thread_id)
-            extracted = getattr(result, "extracted_counts", {}) or {}
-            print(
-                "      ✅ Flushed pipeline (summary + facts): "
-                f"facts={extracted.get('facts_count', 0)}, "
-                f"deduped={getattr(result, 'deduplicated_count', 0)}"
-            )
-        except Exception as exc:
-            print(f"      ❌ flush failed for {user_id}: {exc}")
-            continue
-
-        try:
-            client.generate_user_summary(user_id=user_id)
-            print("      ✅ Generated user_summary")
-        except Exception as exc:
-            print(f"      ⚠️  generate_user_summary failed for {user_id}: {exc}")
-
-        seeded_users += 1
-
-    print(f"\n   ✅ Seeded toolkit memories for {seeded_users}/{len(SEED_CONVERSATIONS)} users")
-    print("   ℹ️  peter and bruce intentionally left empty for workshop exercises")
-
-
-def seed_places(container):
-    """Load places from three separate JSON files and generate embeddings concurrently"""
+def seed_places(container) -> None:
     print("\n🏨 Seeding PLACES...")
-
-    # Load all three files
-    print("   📂 Loading data files...")
     hotels = load_json_file("hotels_all_cities.json")
     restaurants = load_json_file("restaurants_all_cities.json")
     activities = load_json_file("activities_all_cities.json")
-
-    # Combine all places
     all_places = hotels + restaurants + activities
-
     if not all_places:
         print("   ⚠️  No places to seed")
         return
-
-    # Display statistics
-    print(f"\n   📊 Data loaded:")
-    print(f"      • Hotels: {len(hotels)} (49 cities × 10 hotels = 490 expected)")
-    print(f"      • Restaurants: {len(restaurants)} (49 cities × 20 restaurants = 980 expected)")
-    print(f"      • Activities: {len(activities)} (49 cities × 30 activities = 1,470 expected)")
-    print(f"      • Total places: {len(all_places)}")
-
-    # Count by type for verification
-    type_counts = {}
-    for place in all_places:
-        place_type = place.get("type", "unknown")
-        type_counts[place_type] = type_counts.get(place_type, 0) + 1
-
-    print(f"\n   📋 Breakdown by type:")
-    for place_type, count in sorted(type_counts.items()):
-        print(f"      • {place_type}: {count}")
-
-    # print(f"\n   � Processing {len(all_places)} places with concurrent embedding generation...")
-    # print("      💡 Using batch processing and concurrent uploads for optimal performance")
-    #
-    # # Generate embeddings concurrently using batch processing
-    # start_time = time.time()
-    # all_places = generate_embeddings_concurrent(all_places, "description")
-
-    # Upload data concurrently
+    print(
+        f"   📊 hotels={len(hotels)}, restaurants={len(restaurants)}, "
+        f"activities={len(activities)}, total={len(all_places)}"
+    )
     upload_items_concurrent(container, all_places, "places")
 
-    # Final summary
-    print(f"\n   ✅ Seeding complete")
-    print(f"      • Hotels: {len(hotels)}")
-    print(f"      • Restaurants: {len(restaurants)}")
-    print(f"      • Activities: {len(activities)}")
-    print(f"      • Total: {len(all_places)} places")
 
-
-def seed_trips(container):
-    """Load trips from trips.json"""
+def seed_trips(container) -> None:
     print("\n✈️  Seeding TRIPS...")
+    upload_items_concurrent(container, load_json_file("trips.json"), "trips")
 
-    trips = load_json_file("trips.json")
 
-    if not trips:
-        print("   ⚠️  No trips to seed")
+def seed_memories(database) -> None:
+    """Seed the memory containers — pure JSON-to-upsert, no transformations.
+
+    All ids, content hashes, source-id cross-references, prompt metadata and
+    embeddings are pre-baked into ``memories.json`` and ``turns.json``. The
+    seed only needs to push records as-is.
+    """
+    print("\n🧠 Seeding MEMORIES (JSON → memories / memories_turns)...")
+
+    try:
+        memories_container = database.get_container_client(MEMORIES_CONTAINER)
+        turns_container = database.get_container_client(TURNS_CONTAINER)
+        memories_container.read()
+        turns_container.read()
+    except CosmosResourceNotFoundError as exc:
+        print(
+            f"   ⚠️  Memory containers missing "
+            f"({MEMORIES_CONTAINER}, {TURNS_CONTAINER}). "
+            "Run `azd up` (or deploy the Cosmos Bicep) before seeding."
+        )
+        print(f"      Details: {exc}")
         return
 
-    # Upload trips concurrently
-    upload_items_concurrent(container, trips, "trips")
+    turns = load_json_file("turns.json")
+    if turns:
+        upload_items_concurrent(turns_container, turns, "memory turns")
 
-    print(f"   ✅ Seeded {len(trips)} trips")
-
-
-def seed_all_data(containers: Dict[str, Any]):
-    """Seed all data from JSON files with concurrent processing"""
-    print("\n" + "=" * 70)
-    print("📝 DATA SEEDING (CONCURRENT MODE)")
-    print("=" * 70)
-    print(f"⚙️  Concurrency settings:")
-    print(f"   • Max workers: {MAX_CONCURRENT_WORKERS} (optimized for serverless)")
-    print(f"   • Batch size: {BATCH_SIZE}")
-    print(f"   • Embedding batch size: {EMBEDDING_BATCH_SIZE}")
-    print(f"   • Retry attempts: {RETRY_MAX_ATTEMPTS}")
-    print(f"   • Retry base delay: {RETRY_BASE_DELAY}s")
-    print("=" * 70)
-
-    start_time = time.time()
-
-    # Seed each container
-    seed_users(containers["Users"])
-    seed_places(containers["Places"])
-    seed_trips(containers["Trips"])
-    seed_memories()
-
-    end_time = time.time()
-    total_time = end_time - start_time
-
-    print("\n" + "=" * 70)
-    print(f"✅ Data seeding complete in {total_time:.1f} seconds!")
-    print(f"🚀 Performance improved with concurrent processing")
-    print("=" * 70)
+    memories = load_json_file("memories.json")
+    if memories:
+        upload_items_concurrent(memories_container, memories, "memories")
 
 
 # ============================================================================
 # Main
 # ============================================================================
 
-def main():
-    """Main entry point"""
-
+def main() -> None:
     print("\n" + "=" * 70)
-    print("🌍 TRAVEL ASSISTANT - COSMOS DB SETUP")
+    print("🌍 TRAVEL ASSISTANT - COSMOS DB SEED")
     print("=" * 70)
 
     if not COSMOS_ENDPOINT:
@@ -794,27 +234,15 @@ def main():
         print("   Please set COSMOSDB_ENDPOINT in your .env file")
         return
 
-    # Initialize Cosmos client
     client = get_cosmos_client()
-
     database = client.get_database_client(DATABASE_NAME)
-    containers = {
-        name: database.get_container_client(name)
-        for name in CONTAINER_CONFIGS.keys()
-    }
 
-    # Seed data from JSON files
-    seed_all_data(containers)
-
-    print("\n" + "=" * 70)
-    print("🎉 ALL DONE!")
-    print("=" * 70)
-    print("\n📝 Next Steps:")
-    print("   1. Verify containers in Azure Portal")
-    print("   2. Check vector and full-text indexing policies")
-    print("   3. Start MCP server: python -m mcp_server.mcp_http_server")
-    print("   4. Start API server: uvicorn src.app.travel_agents_api:app --reload")
-    print("   5. Test endpoints at http://localhost:8000/docs\n")
+    start = time.time()
+    seed_users(database.get_container_client("Users"))
+    seed_places(database.get_container_client("Places"))
+    seed_trips(database.get_container_client("Trips"))
+    seed_memories(database)
+    print(f"\n✅ Seed complete in {time.time() - start:.1f}s")
 
 
 if __name__ == "__main__":

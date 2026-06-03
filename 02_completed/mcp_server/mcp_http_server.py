@@ -1,7 +1,7 @@
 import sys
 import os
 import logging
-import json
+import inspect
 from typing import Any, Dict, List, Optional
 from langsmith import traceable
 from dotenv import load_dotenv
@@ -209,9 +209,16 @@ def _memory_to_dict(memory: Any) -> Dict[str, Any]:
     return dict(memory)
 
 
+async def _maybe_await(value: Any) -> Any:
+    """Await async toolkit calls while tolerating sync-compatible methods."""
+    if inspect.isawaitable(value):
+        return await value
+    return value
+
+
 @mcp.tool()
 @traceable
-def add_turn(user_id: str, thread_id: str, role: str, text: str) -> Dict[str, Any]:
+async def add_turn(user_id: str, thread_id: str, role: str, text: str) -> Dict[str, Any]:
     """Persist a single conversational turn to long-term memory.
 
     Routes through ``add_local`` + ``push_to_cosmos`` so the toolkit's
@@ -225,26 +232,26 @@ def add_turn(user_id: str, thread_id: str, role: str, text: str) -> Dict[str, An
     if role not in {"user", "assistant"}:
         raise ValueError("role must be 'user' or 'assistant'")
 
-    client = get_memory_client()
+    client = await get_memory_client()
     toolkit_role = "agent" if role == "assistant" else "user"
 
-    client.add_local(
+    await _maybe_await(client.add_local(
         user_id=user_id,
         role=toolkit_role,
         content=text,
         memory_type="turn",
         thread_id=thread_id,
         metadata={"role": role},
-    )
+    ))
     memory_id = client.local_memory[-1]["id"]
-    client.push_to_cosmos()
+    await _maybe_await(client.push_to_cosmos())
     client.local_memory.clear()
     return {"id": memory_id}
 
 
 @mcp.tool()
 @traceable
-def recall_memories(
+async def recall_memories(
     user_id: str,
     query: str,
     thread_id: Optional[str] = None,
@@ -252,35 +259,33 @@ def recall_memories(
 ) -> List[Dict[str, Any]]:
     """Hybrid vector+keyword recall over the user's memories.
     Returns up to top_k records ranked by relevance."""
-    client = get_memory_client()
-
-    import inspect
+    client = await get_memory_client()
 
     params = inspect.signature(client.search_cosmos).parameters
     if "query" in params:
-        hits = client.search_cosmos(
+        hits = await _maybe_await(client.search_cosmos(
             query=query,
             user_id=user_id,
             thread_id=thread_id,
             top_k=top_k,
-        )
+        ))
     else:
-        hits = client.search_cosmos(
+        hits = await _maybe_await(client.search_cosmos(
             search_terms=query,
             user_id=user_id,
             thread_id=thread_id,
             top_k=top_k,
             hybrid_search=True,
-        )
+        ))
     return [_memory_to_dict(hit) for hit in hits]
 
 
 @mcp.tool()
 @traceable
-def get_user_summary(user_id: str) -> Optional[Dict[str, Any]]:
+async def get_user_summary(user_id: str) -> Optional[Dict[str, Any]]:
     """Return the latest rolling user summary for a user, or None if not yet generated."""
-    client = get_memory_client()
-    summary = client.get_user_summary(user_id)
+    client = await get_memory_client()
+    summary = await _maybe_await(client.get_user_summary(user_id))
     if summary is None:
         return None
     if isinstance(summary, list):
@@ -302,6 +307,7 @@ def discover_places(
         user_id: str,
         tenant_id: str = "",
         filters: Optional[Dict[str, Any]] = None,
+        user_preference_vector: list[float] | None = None,
 ) -> List[Dict[str, Any]]:
     """
     Memory-aware place search with hybrid RRF retrieval (for chat assistant).
@@ -316,6 +322,8 @@ def discover_places(
             - dietary: ["vegan", "seafood"] (optional)
             - accessibility: ["wheelchair-friendly"] (optional)
             - priceTier: "budget" | "moderate" | "luxury" (optional)
+        user_preference_vector: Optional user summary embedding from supervisor context;
+            forwarded for personalized RRF ranking.
         
     Returns:
         List of places with match reasons and memory alignment scores
@@ -352,7 +360,8 @@ def discover_places(
             dietary=dietary,
             accessibility=accessibility,
             price_tier=price_tier,
-            limit=10
+            limit=10,
+            user_preference_vector=user_preference_vector
         )
         logger.info(f"✅ Hybrid RRF returned {len(places)} results")
     except Exception as e:
@@ -398,6 +407,86 @@ def discover_places(
 
     logger.info(f"✅ Returning {len(places)} places with filter-based alignment")
     return places
+
+
+@mcp.tool()
+@traceable
+async def discover_itinerary(
+        geo_scope: str,
+        query: str,
+        user_id: str,
+        tenant_id: str = "",
+        aspects: Optional[List[str]] = None,
+        dietary: Optional[List[str]] = None,
+        accessibility: Optional[List[str]] = None,
+        price_tier: Optional[str] = None,
+        user_preference_vector: list[float] | None = None,
+        per_aspect_limit: int = 5,
+) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Multi-aspect place discovery in a single MCP round-trip.
+
+    Runs hybrid RRF Cosmos queries for each requested aspect (hotel / activity /
+    restaurant) **in parallel** server-side via asyncio.gather. Returns one bucketed
+    result so a calling agent can build a full itinerary in one synthesis step
+    instead of issuing 3 separate `discover_places` tool calls.
+
+    Args:
+        geo_scope: City (e.g., "tokyo"). Required.
+        query: Natural-language search phrase (e.g., "3-day trip with food and culture").
+        user_id: User identifier.
+        tenant_id: Tenant identifier.
+        aspects: Subset of {"hotel", "activity", "restaurant"}. Accepts "dining"
+            (mapped to "restaurant") and "attraction" (mapped to "activity") as
+            aliases. Defaults to all three.
+        dietary: Optional dietary preferences (applied to all aspects).
+        accessibility: Optional accessibility preferences.
+        price_tier: Optional priceTier filter.
+        user_preference_vector: Optional embedding for personalized RRF re-ranking.
+        per_aspect_limit: Number of results returned per aspect (default 5).
+
+    Returns:
+        Dict keyed by aspect name ("hotel" / "activity" / "restaurant") whose
+        values are the top `per_aspect_limit` place records for that aspect.
+    """
+    import asyncio
+
+    aspect_aliases = {"dining": "restaurant", "attraction": "activity"}
+    canonical_aspects = [aspect_aliases.get(a, a) for a in (aspects or ["hotel", "activity", "restaurant"])]
+    canonical_aspects = [a for a in dict.fromkeys(canonical_aspects) if a in {"hotel", "activity", "restaurant"}]
+
+    logger.info(f"🗺️  ========== DISCOVER_ITINERARY TOOL CALLED ==========")
+    logger.info(f"     - geo_scope={geo_scope!r} query={query!r} aspects={canonical_aspects}")
+    logger.info(f"     - user_id={user_id} tenant_id={tenant_id} per_aspect_limit={per_aspect_limit}")
+
+    if not canonical_aspects:
+        return {}
+
+    async def _one(place_type: str) -> tuple[str, List[Dict[str, Any]]]:
+        try:
+            results = await asyncio.to_thread(
+                query_places_hybrid,
+                query=query,
+                geo_scope_id=geo_scope,
+                place_type=place_type,
+                dietary=dietary,
+                accessibility=accessibility,
+                price_tier=price_tier,
+                limit=per_aspect_limit,
+                user_preference_vector=user_preference_vector,
+            )
+        except Exception as exc:
+            logger.error(f"❌ discover_itinerary aspect {place_type!r} failed: {exc}")
+            results = []
+        return place_type, results
+
+    gathered = await asyncio.gather(*[_one(a) for a in canonical_aspects])
+    bucketed: Dict[str, List[Dict[str, Any]]] = {pt: items for pt, items in gathered}
+    logger.info(
+        "✅ discover_itinerary returning: "
+        + ", ".join(f"{pt}={len(items)}" for pt, items in bucketed.items())
+    )
+    return bucketed
 
 
 # ============================================================================
@@ -652,180 +741,6 @@ def record_api_call(
         "provider": provider,
         "operation": operation
     }
-
-
-# ============================================================================
-# 9. Agent Transfer Tools (for Orchestrator Routing)
-# ============================================================================
-
-@mcp.tool()
-@traceable
-def transfer_to_hotel(
-    reason: str
-) -> str:
-    """
-    Transfer conversation to the Hotel Agent.
-    
-    Use this when:
-    - User wants to search for hotels or accommodations
-    - User is sharing hotel/lodging preferences (boutique, quiet, central, etc.)
-    - User asks about places to stay
-    
-    Examples:
-    - "Find hotels in Paris"
-    - "I prefer quiet hotels away from tourist areas"
-    - "Where should I stay?"
-    
-    Args:
-        reason: Why you're transferring to this agent
-        
-    Returns:
-        JSON with goto field for routing
-    """
-    
-    logger.info(f"🔄 Transfer to Hotel Agent: {reason}")
-    
-    return json.dumps({
-        "goto": "hotel",
-        "reason": reason,
-        "message": "Transferring to Hotel Agent to find accommodations for you."
-    })
-
-
-@mcp.tool()
-@traceable
-def transfer_to_activity(
-    reason: str
-) -> str:
-    """
-    Transfer conversation to the Activity Agent.
-    
-    Use this when:
-    - User wants to discover attractions, museums, landmarks
-    - User is sharing activity preferences (art, history, nature, etc.)
-    - User asks about things to do or see
-    
-    Examples:
-    - "What should I do in Barcelona?"
-    - "Find art museums"
-    - "I love history and architecture"
-    
-    Args:
-        reason: Why you're transferring to this agent
-        
-    Returns:
-        JSON with goto field for routing
-    """
-    
-    logger.info(f"🔄 Transfer to Activity Agent: {reason}")
-    
-    return json.dumps({
-        "goto": "activity",
-        "reason": reason,
-        "message": "Transferring to Activity Agent to discover attractions for you."
-    })
-
-
-@mcp.tool()
-@traceable
-def transfer_to_dining(
-    reason: str
-) -> str:
-    """
-    Transfer conversation to the Dining Agent.
-    
-    Use this when:
-    - User wants restaurant or cafe recommendations
-    - User is sharing dietary preferences or cuisine interests
-    - User asks where to eat
-    
-    Examples:
-    - "Find vegetarian restaurants"
-    - "I'm pescatarian and like local bistros"
-    - "Where should I have dinner?"
-    
-    Args:
-        reason: Why you're transferring to this agent
-        
-    Returns:
-        JSON with goto field for routing
-    """
-    
-    logger.info(f"🔄 Transfer to Dining Agent: {reason}")
-    
-    return json.dumps({
-        "goto": "dining",
-        "reason": reason,
-        "message": "Transferring to Dining Agent to find restaurants for you."
-    })
-
-
-@mcp.tool()
-@traceable
-def transfer_to_itinerary_generator(
-    reason: str
-) -> str:
-    """
-    Transfer conversation to the Itinerary Generator agent.
-    
-    Use this when:
-    - User explicitly requests an itinerary or day-by-day plan
-    - User says "create itinerary", "plan my days", "generate schedule"
-    - User wants a complete trip plan synthesized
-    
-    Examples:
-    - "Create an itinerary for my trip"
-    - "Plan my 4 days in Paris"
-    - "Generate a schedule with everything we discussed"
-    
-    Args:
-        reason: Why you're transferring to this agent
-        
-    Returns:
-        JSON with goto field for routing
-    """
-    
-    logger.info(f"🔄 Transfer to Itinerary Generator: {reason}")
-    
-    return json.dumps({
-        "goto": "itinerary_generator",
-        "reason": reason,
-        "message": "Transferring to Itinerary Generator to create your day-by-day plan."
-    })
-
-
-@mcp.tool()
-@traceable
-def transfer_to_orchestrator(
-    reason: str
-) -> str:
-    """
-    Transfer conversation back to the Orchestrator agent.
-    
-    Use this when:
-    - Task is complete and user needs general assistance
-    - User has a new question that doesn't fit specialized agents
-    - General conversation, greetings, clarifications needed
-    
-    Examples:
-    - After completing a specific task
-    - User says "Thanks" or changes topic
-    - User asks general questions about the system
-    
-    Args:
-        reason: Why you're transferring to this agent
-        
-    Returns:
-        JSON with goto field for routing
-    """
-    
-    logger.info(f"🔄 Transfer to Orchestrator: {reason}")
-    
-    return json.dumps({
-        "goto": "orchestrator",
-        "reason": reason,
-        "message": "Transferring back to Orchestrator for general assistance."
-    })
 
 
 # ============================================================================
