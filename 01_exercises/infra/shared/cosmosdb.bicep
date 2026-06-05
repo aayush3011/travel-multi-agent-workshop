@@ -492,6 +492,26 @@ resource cosmosContainerMemories 'Microsoft.DocumentDB/databaseAccounts/sqlDatab
             language: 'en-US'
           }
         ]
+        // Required by azure-cosmos-agent-memory synthesize_procedural — its
+        // SELECT TOP 50 ... ORDER BY c.salience DESC, c.created_at ASC, c.id ASC
+        // query needs a matching composite index (otherwise Cosmos returns a
+        // BadRequest "order by query does not have a corresponding composite index").
+        compositeIndexes: [
+          [
+            {
+              path: '/salience'
+              order: 'descending'
+            }
+            {
+              path: '/created_at'
+              order: 'ascending'
+            }
+            {
+              path: '/id'
+              order: 'ascending'
+            }
+          ]
+        ]
       }
       vectorEmbeddingPolicy: {
         vectorEmbeddings: [

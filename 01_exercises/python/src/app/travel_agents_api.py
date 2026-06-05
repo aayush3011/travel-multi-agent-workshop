@@ -22,22 +22,20 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Reduce noise from verbose libraries
-logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(logging.WARNING)
-logging.getLogger("azure.identity").setLevel(logging.WARNING)
-logging.getLogger("azure.identity._credentials.environment").setLevel(logging.WARNING)
-logging.getLogger("azure.identity._credentials.managed_identity").setLevel(logging.WARNING)
-logging.getLogger("azure.identity._credentials.chained").setLevel(logging.WARNING)
-logging.getLogger("azure.cosmos").setLevel(logging.WARNING)
-logging.getLogger("azure.cosmos._cosmos_http_logging_policy").setLevel(logging.WARNING)
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("httpcore").setLevel(logging.WARNING)
-logging.getLogger("mcp").setLevel(logging.WARNING)
-logging.getLogger("mcp.client.streamable_http").setLevel(logging.WARNING)
-
-# Suppress service initialization logs
-logging.getLogger("src.app.services.azure_open_ai").setLevel(logging.WARNING)
-logging.getLogger("src.app.services.azure_cosmos_db").setLevel(logging.WARNING)
+# Quiet down chatty libraries so the workshop logs stay readable
+for noisy in (
+    "azure.core.pipeline.policies.http_logging_policy",
+    "azure.identity",
+    "azure.cosmos",
+    "httpx",
+    "httpcore",
+    "mcp",
+    "sse_starlette.sse",
+    "openai._base_client",
+    "urllib3.connectionpool",
+    "langsmith.client",
+):
+    logging.getLogger(noisy).setLevel(logging.WARNING)
 
 # Add project root to path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -67,8 +65,8 @@ from src.app.services.azure_cosmos_db import (
     create_user, get_all_users, get_user_by_id,
     store_debug_log, get_debug_log, query_debug_logs
 )
-#from src.app.travel_agents import setup_agents, build_agent_graph, cleanup_persistent_session
-from src.app.services.agent_memory import get_memory_client
+# from src.app.travel_agents import setup_agents, build_agent_graph, cleanup_persistent_session
+# from src.app.services.agent_memory import get_memory_client
 
 # Load environment variables
 load_dotenv(override=False)
@@ -284,6 +282,10 @@ agent_mapping = {
 #     for attempt in range(max_retries):
 #         try:
 #             logger.info(f"Attempt {attempt + 1}/{max_retries}: Initializing agents...")
+
+#             # # NEW: warm up the memory client so the first /chat doesn't pay the connect cost
+#             # await get_memory_client()
+
 #             await setup_agents()
 #             _graph = build_agent_graph()
 #             _checkpointer = get_checkpoint_saver()
@@ -652,7 +654,7 @@ def delete_session(tenantId: str, userId: str, sessionId: str, background_tasks:
 # Chat Completion Endpoint
 # ============================================================================
 
-def store_debug_log_from_response(sessionId: str, tenantId: str, userId: str, response_data: List[Dict]) -> str:
+def store_debug_log_from_response(sessionId: str, tenantId: str, userId: str, response_data: List[Dict], debug_log_id: Optional[str] = None) -> str:
     """
     Extract debug information from LangGraph response and store in Cosmos DB.
 
@@ -661,6 +663,7 @@ def store_debug_log_from_response(sessionId: str, tenantId: str, userId: str, re
         tenantId: Tenant identifier
         userId: User identifier
         response_data: LangGraph response data containing agent messages
+        debug_log_id: Optional pre-generated debug log ID
 
     Returns:
         Debug log ID
@@ -714,7 +717,7 @@ def store_debug_log_from_response(sessionId: str, tenantId: str, userId: str, re
 
     # Store in Cosmos DB using the new function
     try:
-        debug_log_id = store_debug_log(
+        stored_id = store_debug_log(
             session_id=sessionId,
             tenant_id=tenantId,
             user_id=userId,
@@ -730,12 +733,13 @@ def store_debug_log_from_response(sessionId: str, tenantId: str, userId: str, re
             transfer_success=transfer_success,
             tool_calls=tool_calls,
             logprobs=logprobs,
-            content_filter_results=content_filter_results
+            content_filter_results=content_filter_results,
+            debug_log_id=debug_log_id,
         )
 
         logger.info(
-            f"Debug log stored: {debug_log_id} for session {sessionId} (agent: {agent_selected}, tokens: {total_tokens})")
-        return debug_log_id
+            f"Debug log stored: {stored_id} for session {sessionId} (agent: {agent_selected}, tokens: {total_tokens})")
+        return stored_id
     except Exception as e:
         logger.error(f"Failed to store debug log: {e}")
         # Return a placeholder ID if storage fails
@@ -748,7 +752,8 @@ def extract_relevant_messages(
         response_data: List[Dict],
         tenantId: str,
         userId: str,
-        sessionId: str
+        sessionId: str,
+        user_message_text: str = ""
 ) -> List[tuple]:
     """Extract user and assistant messages from response data. Returns tuples of (MessageModel, original_message)"""
 
@@ -775,46 +780,36 @@ def extract_relevant_messages(
     if not last_agent_node:
         return []
 
-    # Extract messages
+    # Collect messages emitted across every update so we can pick the final reply
+    # even when an intermediate update (e.g., a tool call) is the "last" node.
     messages = []
-    for key, value in last_agent_node.items():
-        if isinstance(value, dict) and "messages" in value:
-            messages.extend(value["messages"])
+    for update in response_data:
+        if not isinstance(update, dict):
+            continue
+        for value in update.values():
+            if isinstance(value, dict) and "messages" in value:
+                messages.extend(value["messages"])
 
-    # Find last user message index
-    last_user_index = -1
-    for i in range(len(messages) - 1, -1, -1):
-        if isinstance(messages[i], HumanMessage):
-            last_user_index = i
-            break
+    # With stream_mode="updates" the HumanMessage isn't in any per-node delta,
+    # so synthesize it from the request body so the UI can render the turn.
+    user_msg = HumanMessage(content=user_message_text) if user_message_text else None
 
-    if last_user_index == -1:
-        return []
-
-    # Get messages after last user message
-    messages_after_user = messages[last_user_index:]
-
-    # Filter: Only keep the last user message and the LAST assistant message (not all intermediate ones)
-    filtered_messages = []
-
-    # Add user message
-    for msg in messages_after_user:
-        if isinstance(msg, HumanMessage):
-            filtered_messages.append(msg)
-            break
-
-    # Find and add only the LAST assistant message (skip intermediates and tool messages)
+    # Find the last assistant message that has real content (skip tool-only AIMessages).
     last_assistant_msg = None
-    for i in range(len(messages_after_user) - 1, -1, -1):
-        msg = messages_after_user[i]
+    for msg in reversed(messages):
         if isinstance(msg, AIMessage) and not isinstance(msg, ToolMessage):
-            # Make sure it has actual content
-            if hasattr(msg, "content") and msg.content and msg.content.strip():
+            if hasattr(msg, "content") and msg.content and str(msg.content).strip():
                 last_assistant_msg = msg
                 break
 
-    if last_assistant_msg:
+    filtered_messages = []
+    if user_msg is not None:
+        filtered_messages.append(user_msg)
+    if last_assistant_msg is not None:
         filtered_messages.append(last_assistant_msg)
+
+    if not filtered_messages:
+        return []
 
     # Convert to MessageModel and keep original message
     mapped_agent = agent_mapping.get(last_agent_name, last_agent_name.title())
@@ -879,9 +874,10 @@ def process_messages_background(message_tuples: List[tuple], userId: str, tenant
 
 
 async def _post_response_background(sessionId: str, tenantId: str, userId: str, response_data, messages,
-                                    debug_log_id: str):
+                                    debug_log_id: str, user_message_text: str = ""):
     """
-    Background task: store debug log, persist messages, update agent state.
+    Background task: store debug log, persist messages, capture turns for the
+    memory pipeline, update agent state.
     Runs after HTTP response is already sent to the client.
     Each step is guarded independently so one failure doesn't block the others.
     """
@@ -906,10 +902,38 @@ async def _post_response_background(sessionId: str, tenantId: str, userId: str, 
     except Exception as e:
         logger.error(f"❌ Failed to persist messages for session {sessionId}: {e}")
 
-    # Step 3: Toolkit auto-summarization is now driven by the MCP add_turn
-    # tool (which calls add_local + push_to_cosmos) and consults the
-    # FACT_EXTRACTION_EVERY_N / THREAD_SUMMARY_EVERY_N / USER_SUMMARY_EVERY_N
-    # / DEDUP_EVERY_N env vars. No hand-rolled cadence needed here.
+    # # Step 3: Memory capture.
+    # memory_client = None
+    # try:
+    #     memory_client = await get_memory_client()
+    # except Exception:
+    #     memory_client = None
+    #
+    # if memory_client is not None:
+    #     try:
+    #         if user_message_text:
+    #             memory_client.add_local(
+    #                 user_id=userId,
+    #                 thread_id=sessionId,
+    #                 role="user",
+    #                 content=user_message_text,
+    #                 memory_type="turn",
+    #             )
+    #         assistant_text = ""
+    #         for msg_model, _ in messages:
+    #             if getattr(msg_model, "senderRole", None) == "Assistant" and getattr(msg_model, "text", ""):
+    #                 assistant_text = msg_model.text
+    #         if assistant_text:
+    #             memory_client.add_local(
+    #                 user_id=userId,
+    #                 thread_id=sessionId,
+    #                 role="agent",
+    #                 content=assistant_text,
+    #                 memory_type="turn",
+    #             )
+    #         await memory_client.push_to_cosmos()
+    #     except Exception as exc:
+    #         logger.warning(f"Background memory capture failed for session {sessionId}: {exc}")
 
     # Step 4: Patch active agent
     try:
@@ -927,6 +951,29 @@ async def _post_response_background(sessionId: str, tenantId: str, userId: str, 
         logger.error(f"❌ Failed to patch active agent for session {sessionId}: {e}")
 
     logger.info(f"✅ Background processing complete for session {sessionId}")
+
+
+async def _fetch_user_preference_vector(client: Any, user_id: str) -> list[float] | None:
+    """Fetch the user_summary embedding for preference-vector biasing in discover_places.
+
+    Returns None when the user has no summary yet, the summary lacks an embedding,
+    or any error occurs — preference biasing is best-effort, never a request blocker.
+    """
+    if not user_id:
+        return None
+    try:
+        summary = await client.get_user_summary(user_id)
+    except Exception as exc:
+        logger.warning("user_summary lookup failed for user=%s: %s", user_id, exc)
+        return None
+    if summary is None:
+        return None
+    if isinstance(summary, list):
+        if not summary:
+            return None
+        summary = summary[0]
+    embedding = summary.get("embedding") if isinstance(summary, dict) else None
+    return embedding if isinstance(embedding, list) else None
 
 
 @app.post(
@@ -1000,6 +1047,32 @@ async def get_chat_completion(
 #     # Ensure agents are initialized
 #     await ensure_agents_initialized()
 #
+#     # # NEW: pull a memory client and best-effort fetch the preference vector
+#     # client = await get_memory_client()
+#     # pref_vector = await _fetch_user_preference_vector(client, userId)
+#     #
+#     # if pref_vector is not None:
+#     #     # CHANGED: add user_preference_vector to the configurable block
+#     #     config = {
+#     #         "configurable": {
+#     #             "thread_id": sessionId,
+#     #             "checkpoint_ns": "",
+#     #             "userId": userId,
+#     #             "tenantId": tenantId,
+#     #             "user_preference_vector": pref_vector,  # belt-and-braces for config-reading tools
+#     #         }
+#     #     }
+#     #
+#     #     # NEW: bracket the existing workflow.ainvoke(...) calls with set/reset
+#     #     token = _current_user_preference_vector.set(pref_vector)
+#     #     try:
+#     #         # ... the existing try/except body from Module 03 stays here unchanged:
+#     #         # checkpoint lookup, workflow.ainvoke(...), extract_relevant_messages(...),
+#     #         # background_tasks.add_task(...), return response_models
+#     #         ...
+#     #     finally:
+#     #         _current_user_preference_vector.reset(token)
+#
 #     if not request_body.strip():
 #         raise HTTPException(status_code=400, detail="Request body cannot be empty")
 #
@@ -1047,16 +1120,17 @@ async def get_chat_completion(
 #         # Extract messages (lightweight — just parses response_data)
 #         messages = extract_relevant_messages(
 #             debug_log_id, last_active_agent, response_data,
-#             tenantId, userId, sessionId
+#             tenantId, userId, sessionId,
+#             user_message_text=request_body,
 #         )
 #
 #         # Build response immediately from extracted messages
 #         response_models = [msg_model for msg_model, _ in messages]
 #
-#         # Offload ALL storage to background (debug log, messages, agent patch)
+#         # Offload ALL storage to background (debug log, messages, memory capture, agent patch)
 #         background_tasks.add_task(
 #             _post_response_background,
-#             sessionId, tenantId, userId, response_data, messages, debug_log_id
+#             sessionId, tenantId, userId, response_data, messages, debug_log_id, request_body
 #         )
 #
 #         return response_models
@@ -1272,79 +1346,85 @@ def delete_trip_endpoint(tenantId: str, userId: str, tripId: str):
 # Memory Management Endpoints
 # ============================================================================
 
-@app.get(
-    "/users/{user_id}/memories",
-    tags=[MEMORY_TAG],
-    summary="Get User Memories",
-    description="Retrieve toolkit memories for a user; searches when q is supplied, otherwise lists recent memories",
-    response_model=List[Dict[str, Any]]
-)
-def get_user_memories(
-    user_id: str,
-    q: Optional[str] = None,
-    thread_id: Optional[str] = None,
-    top_k: int = 10,
-):
-    """Get toolkit-backed memories for a user."""
-    try:
-        client = get_memory_client()
-        if q and q.strip():
-            return client.search_cosmos(
-                search_terms=q,
-                user_id=user_id,
-                thread_id=thread_id,
-                top_k=top_k,
-            )
-
-        return client.get_memories(
-            user_id=user_id,
-            thread_id=thread_id,
-            recent_k=top_k,
-        )
-    except Exception as e:
-        logger.error(f"Error fetching memories: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to fetch memories: {str(e)}")
-
-
-@app.delete(
-    "/users/{user_id}/memories/{memory_id}",
-    tags=[MEMORY_TAG],
-    summary="Delete Memory",
-    description="Delete a toolkit memory for a user and thread",
-    status_code=204
-)
-def delete_memory(user_id: str, memory_id: str, thread_id: Optional[str] = None):
-    """Delete a toolkit-backed memory."""
-    if not thread_id:
-        raise HTTPException(status_code=400, detail="thread_id is required")
-
-    try:
-        get_memory_client().delete_cosmos(
-            memory_id=memory_id,
-            thread_id=thread_id,
-            user_id=user_id,
-        )
-        return Response(status_code=204)
-    except Exception as e:
-        logger.error(f"Error deleting memory: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to delete memory: {str(e)}")
-
-
-@app.get(
-    "/users/{user_id}/summary",
-    tags=[MEMORY_TAG],
-    summary="Get User Summary",
-    description="Retrieve the latest toolkit-generated cross-thread user summary",
-    response_model=Optional[Dict[str, Any]]
-)
-def get_user_summary_endpoint(user_id: str):
-    """Get the latest toolkit-backed user summary, or null if absent."""
-    try:
-        summaries = get_memory_client().get_user_summary(user_id)
-        return summaries[0] if summaries else None
-    except Exception as e:
-        logger.error(f"Error fetching user summary: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to fetch user summary: {str(e)}")
+# @app.get(
+#     "/users/{user_id}/memories",
+#     tags=[MEMORY_TAG],
+#     summary="Get User Memories",
+#     description="Retrieve toolkit memories for a user; searches when q is supplied, otherwise lists recent memories",
+#     response_model=List[Dict[str, Any]]
+# )
+# async def get_user_memories(
+#     user_id: str,
+#     q: Optional[str] = None,
+#     thread_id: Optional[str] = None,
+#     top_k: int = 10,
+# ):
+#     """Get toolkit-backed memories for a user."""
+#     try:
+#         client = await get_memory_client()
+#         if q and q.strip():
+#             return await client.search_cosmos(
+#                 search_terms=q,
+#                 user_id=user_id,
+#                 thread_id=thread_id,
+#                 top_k=top_k,
+#             )
+#
+#         return await client.get_memories(
+#             user_id=user_id,
+#             thread_id=thread_id,
+#             recent_k=top_k,
+#         )
+#     except Exception as e:
+#         logger.error(f"Error fetching memories: {e}")
+#         raise HTTPException(status_code=500, detail=f"Failed to fetch memories: {str(e)}")
+#
+#
+# @app.delete(
+#     "/users/{user_id}/memories/{memory_id}",
+#     tags=[MEMORY_TAG],
+#     summary="Delete Memory",
+#     description="Delete a toolkit memory for a user and thread",
+#     status_code=204
+# )
+# async def delete_memory(user_id: str, memory_id: str, thread_id: Optional[str] = None):
+#     """Delete a toolkit-backed memory."""
+#     if not thread_id:
+#         raise HTTPException(status_code=400, detail="thread_id is required")
+#
+#     try:
+#         client = await get_memory_client()
+#         await client.delete_cosmos(
+#             memory_id=memory_id,
+#             thread_id=thread_id,
+#             user_id=user_id,
+#         )
+#         return Response(status_code=204)
+#     except Exception as e:
+#         logger.error(f"Error deleting memory: {e}")
+#         raise HTTPException(status_code=500, detail=f"Failed to delete memory: {str(e)}")
+#
+#
+# @app.get(
+#     "/users/{user_id}/summary",
+#     tags=[MEMORY_TAG],
+#     summary="Get User Summary",
+#     description="Retrieve the latest toolkit-generated cross-thread user summary",
+#     response_model=Optional[Dict[str, Any]]
+# )
+# async def get_user_summary(user_id: str):
+#     """Get the latest toolkit-backed user summary, or null if absent."""
+#     try:
+#         client = await get_memory_client()
+#         summary = await client.get_user_summary(user_id)
+#         if summary is None:
+#             return None
+#         if isinstance(summary, list):
+#             return summary[0] if summary else None
+#         return summary
+#     except Exception as e:
+#         logger.error(f"Error fetching user summary: {e}")
+#         raise HTTPException(status_code=500, detail=f"Failed to fetch user summary: {str(e)}")
 
 
 # ============================================================================
