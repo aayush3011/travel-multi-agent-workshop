@@ -3,11 +3,13 @@ import os
 import uuid
 from datetime import UTC, datetime
 from typing import List, Dict, Optional, Any
-from azure.cosmos import CosmosClient
+from azure.cosmos import CosmosClient, PartitionKey
+from azure.cosmos.aio import CosmosClient as AsyncCosmosClient
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from azure.identity import DefaultAzureCredential
+from azure.identity.aio import DefaultAzureCredential as AsyncDefaultAzureCredential
 from dotenv import load_dotenv
-from langgraph_checkpoint_cosmosdb import CosmosDBSaver
+from langchain_azure_cosmosdb import CosmosDBSaver
 from langsmith import traceable
 
 from src.app.services.azure_open_ai import generate_embedding, extract_keywords
@@ -35,6 +37,15 @@ debug_logs_container = None
 places_container = None
 trips_container = None
 users_container = None
+
+# Async client globals for the LangGraph checkpointer.
+# langchain-azure-cosmosdb CosmosDBSaver is async-only and requires an
+# AsyncContainerProxy, so we keep a parallel AsyncCosmosClient alive for
+# the app lifetime.
+_async_cosmos_client = None
+_async_credential = None
+_async_checkpoint_container = None
+_checkpoint_saver = None
 
 
 def initialize_cosmos_client():
@@ -93,25 +104,86 @@ def get_cosmos_client():
     return cosmos_client
 
 
-def get_checkpoint_saver():
+async def aget_checkpoint_saver():
+    """Return the async CosmosDBSaver, initializing it on first call.
+
+    Idempotent: subsequent calls return the cached saver. Call
+    ``close_async_cosmos_client()`` at shutdown to release the underlying
+    async client and credential cleanly. Falls back to MemorySaver if the
+    async Cosmos client cannot be created.
     """
-    Return a CosmosDBSaver for LangGraph checkpoint persistence.
-    Falls back to MemorySaver if Cosmos DB is not available.
-    """
-    if cosmos_client is not None:
+    global _async_cosmos_client, _async_credential, _async_checkpoint_container, _checkpoint_saver
+
+    if _checkpoint_saver is not None:
+        return _checkpoint_saver
+
+    try:
+        if COSMOS_DB_KEY:
+            _async_cosmos_client = AsyncCosmosClient(COSMOS_DB_URL, credential=COSMOS_DB_KEY)
+        else:
+            _async_credential = AsyncDefaultAzureCredential()
+            _async_cosmos_client = AsyncCosmosClient(COSMOS_DB_URL, credential=_async_credential)
+
+        db = await _async_cosmos_client.create_database_if_not_exists(DATABASE_NAME)
+        _async_checkpoint_container = await db.create_container_if_not_exists(
+            id=checkpoint_container,
+            partition_key=PartitionKey(path="/partition_key"),
+        )
+        _checkpoint_saver = CosmosDBSaver(_async_checkpoint_container)
+        logger.info(f"✅ CosmosDBSaver initialized on container: {checkpoint_container}")
+        return _checkpoint_saver
+    except Exception as e:
+        logger.warning(f"Failed to create async CosmosDBSaver: {e}")
+        logger.warning("Using MemorySaver for checkpoint persistence (data will not persist)")
+        from langgraph.checkpoint.memory import MemorySaver
+        _checkpoint_saver = MemorySaver()
+        return _checkpoint_saver
+
+
+async def close_async_cosmos_client():
+    """Release the async client and credential on app shutdown."""
+    global _async_cosmos_client, _async_credential, _async_checkpoint_container, _checkpoint_saver
+    if _async_cosmos_client is not None:
         try:
-            logger.info("Using CosmosDBSaver for checkpoint persistence")
-            return CosmosDBSaver(
-                database_name=DATABASE_NAME,
-                container_name=checkpoint_container
-            )
+            await _async_cosmos_client.close()
         except Exception as e:
-            logger.warning(f"Failed to create CosmosDBSaver: {e}")
-    
-    # Fallback to in-memory checkpointer
-    logger.warning("Using MemorySaver for checkpoint persistence (data will not persist)")
-    from langgraph.checkpoint.memory import MemorySaver
-    return MemorySaver()
+            logger.warning(f"Error closing async Cosmos client: {e}")
+        _async_cosmos_client = None
+    if _async_credential is not None:
+        try:
+            await _async_credential.close()
+        except Exception as e:
+            logger.warning(f"Error closing async credential: {e}")
+        _async_credential = None
+    _async_checkpoint_container = None
+    _checkpoint_saver = None
+
+
+async def adelete_checkpoints_for_thread(thread_id: str) -> int:
+    """Delete every checkpoint document associated with a LangGraph thread.
+
+    ``CosmosDBSaver.adelete_thread()`` raises ``NotImplementedError`` in
+    langchain-azure-cosmosdb v1.0.0, so we issue the query + delete loop
+    ourselves against the async container. Returns the number of documents
+    deleted.
+    """
+    if _async_checkpoint_container is None:
+        logger.warning("Checkpoint container not initialized — skipping checkpoint delete")
+        return 0
+
+    deleted = 0
+    query = "SELECT c.id, c.partition_key FROM c WHERE CONTAINS(c.partition_key, @sessionId)"
+    params = [{"name": "@sessionId", "value": thread_id}]
+    async for item in _async_checkpoint_container.query_items(query=query, parameters=params):
+        try:
+            await _async_checkpoint_container.delete_item(
+                item=item["id"],
+                partition_key=item["partition_key"],
+            )
+            deleted += 1
+        except Exception as e:
+            logger.warning(f"Failed to delete checkpoint {item.get('id')}: {e}")
+    return deleted
 
 
 # ============================================================================

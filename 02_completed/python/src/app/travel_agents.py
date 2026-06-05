@@ -25,11 +25,11 @@ from langchain_core.tools import tool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.tools import load_mcp_tools
 from langgraph.prebuilt import create_react_agent
-from langgraph_checkpoint_cosmosdb import CosmosDBSaver
+from langgraph.checkpoint.memory import MemorySaver
 from pydantic import BaseModel, Field
 
 from src.app.services.azure_open_ai import model
-from src.app.services.azure_cosmos_db import DATABASE_NAME, checkpoint_container
+
 
 # Setup logging - reduce clutter by setting specific loggers to WARNING
 logging.basicConfig(level=logging.INFO)
@@ -99,14 +99,6 @@ def _create_agent(agent_model: Any, tools: list[Any], prompt_text: str, **kwargs
     signature = inspect.signature(create_react_agent)
     prompt_kwarg = "state_modifier" if "state_modifier" in signature.parameters else "prompt"
     return create_react_agent(agent_model, tools, **{prompt_kwarg: prompt_text}, **kwargs)
-
-
-def _create_checkpointer() -> CosmosDBSaver:
-    """Create the Cosmos DB checkpointer using the installed package signature."""
-    try:
-        return CosmosDBSaver(database_name=DATABASE_NAME, container_name=checkpoint_container)
-    except TypeError:
-        return CosmosDBSaver(container=checkpoint_container)
 
 
 def _looks_like_vector(value: Any) -> bool:
@@ -615,7 +607,7 @@ async def setup_agents(checkpointer=None):
             *_mcp_session_tools,
         ],
         prompt_text=SUPERVISOR_BASE_PROMPT,
-        checkpointer=checkpointer or _create_checkpointer(),
+        checkpointer=checkpointer or MemorySaver(),
     )
 
     logger.info("✅ Supervisor and sub-agents created successfully\n")

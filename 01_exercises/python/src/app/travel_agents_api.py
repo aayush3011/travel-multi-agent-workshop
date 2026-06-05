@@ -57,7 +57,8 @@ else:
 from src.app.services.azure_open_ai import model, generate_embedding
 from src.app.services.azure_cosmos_db import (
     sessions_container, messages_container, trips_container,
-    places_container, debug_logs_container, get_checkpoint_saver,
+    places_container, debug_logs_container,
+    aget_checkpoint_saver, close_async_cosmos_client, adelete_checkpoints_for_thread,
     create_session_record, get_session_by_id,
     append_message, get_session_messages, query_places_hybrid,
     get_trip, query_places_with_theme, query_places_filtered,
@@ -286,9 +287,9 @@ agent_mapping = {
 #             # # NEW: warm up the memory client so the first /chat doesn't pay the connect cost
 #             # await get_memory_client()
 
+#             _checkpointer = await aget_checkpoint_saver()
 #             await setup_agents()
 #             _graph = build_agent_graph()
-#             _checkpointer = get_checkpoint_saver()
 #             _agents_initialized = True
 #             logger.info("Agents initialized successfully!")
 #             return
@@ -328,6 +329,7 @@ agent_mapping = {
 #     """Cleanup resources on shutdown"""
 #     logger.info("Shutting down Travel Assistant API...")
 #     await cleanup_persistent_session()
+#     await close_async_cosmos_client()
 #     logger.info("Cleanup complete")
 
 
@@ -338,10 +340,10 @@ agent_mapping = {
 #     if not _agents_initialized:
 #         logger.info("Initializing agents on demand...")
 #         try:
-#             await setup_agents()
 #             global _graph, _checkpointer
+#             _checkpointer = await aget_checkpoint_saver()
+#             await setup_agents()
 #             _graph = build_agent_graph()
-#             _checkpointer = get_checkpoint_saver()
 #             _agents_initialized = True
 #             logger.info("Agents initialized successfully!")
 #         except Exception as e:
@@ -622,23 +624,9 @@ def delete_session(tenantId: str, userId: str, sessionId: str, background_tasks:
                     logger.warning(f"Failed to delete message {item['id']}: {e}")
 
         # Schedule checkpoint cleanup as background task
-        def delete_checkpoints():
+        async def delete_checkpoints():
             try:
-                if _checkpointer and hasattr(_checkpointer, 'container'):
-                    query = "SELECT c.id, c.partition_key FROM c WHERE CONTAINS(c.partition_key, @sessionId)"
-                    partitions = list(_checkpointer.container.query_items(
-                        query=query,
-                        parameters=[{"name": "@sessionId", "value": sessionId}],
-                        enable_cross_partition_query=True
-                    ))
-                    for partition in partitions:
-                        try:
-                            _checkpointer.container.delete_item(
-                                item=partition["id"],
-                                partition_key=partition["partition_key"]
-                            )
-                        except Exception as e:
-                            logger.warning(f"Failed to delete checkpoint: {e}")
+                await adelete_checkpoints_for_thread(sessionId)
             except Exception as e:
                 logger.error(f"Error cleaning up checkpoints: {e}")
 
@@ -1088,8 +1076,8 @@ async def get_chat_completion(
 #         }
 #
 #         # Retrieve last checkpoint
-#         checkpoints = list(_checkpointer.list(config))
-#         last_active_agent = "orchestrator"
+#         checkpoints = [c async for c in _checkpointer.alist(config)]
+#         last_active_agent = "supervisor"
 #
 #         if not checkpoints:
 #             # No previous state - start fresh

@@ -156,7 +156,33 @@ Azure Cosmos DB provides:
 The package source lives at <https://github.com/langchain-ai/langchain-azure/tree/main/libs/azure-cosmosdb> if you want to read the implementation.
 
 ### Connecting the Checkpointer
-TODO
+
+### Step 1: Wire the Cosmos DB checkpointer into the FastAPI lifespan
+
+Open **src/app/travel_agents_api.py**.
+
+Search for the method `initialize_agents` (and `ensure_agents_initialized`), scroll to `_checkpointer` and create the checkpointer *before* setting up the agents:
+
+```python
+@app.on_event("startup")
+async def initialize_agents():
+    global _agents_initialized, _graph, _checkpointer
+    # ...retry loop wrapping...
+    _checkpointer = await aget_checkpoint_saver()
+    await setup_agents(checkpointer=_checkpointer)
+```
+
+Similarly, search for the method `ensure_agents_initialized`, scroll to `_checkpointer` and create the checkpointer *before* setting up the agents:
+
+```python
+try:
+    global _graph, _checkpointer
+    _checkpointer = await aget_checkpoint_saver()
+    await setup_agents(checkpointer=_checkpointer)
+```
+
+That's the checkpointer wired. State is now persistent. Next: short-term and long-term memory.
+
 ---
 
 ## Activity 3: Build the async memory client wrapper
@@ -2028,6 +2054,100 @@ if __name__ == "__main__":
 </details>
 
 <details>
+  <summary> Completed code for <strong>src/app/service/agent_memory.py</strong>strong></summary>
+
+<br>
+
+```python
+"""Async singleton wrapper around azure.cosmos.agent_memory.aio.AsyncCosmosMemoryClient.
+
+All workshop memory access (MCP, REST, agents) flows through `get_memory_client()`.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+
+from dotenv import load_dotenv
+
+from azure.cosmos.agent_memory.aio import AsyncCosmosMemoryClient
+
+load_dotenv(override=False)
+
+_client: AsyncCosmosMemoryClient | None = None
+_init_lock = asyncio.Lock()
+
+
+def _get_required_env(name: str) -> str:
+    value = os.environ[name]
+    if not value:
+        raise ValueError(f"{name} is set but empty")
+    return value
+
+
+async def _create_memory_client() -> AsyncCosmosMemoryClient:
+    cosmos_endpoint = _get_required_env("COSMOSDB_ENDPOINT")
+    cosmos_database = os.environ.get("COSMOSDB_DATABASE_NAME", "TravelAssistant")
+    ai_foundry_endpoint = _get_required_env("AZURE_OPENAI_ENDPOINT")
+    chat_deployment = (
+        os.environ.get("AZURE_OPENAI_CHAT_DEPLOYMENT")
+        or os.environ.get("AZURE_OPENAI_DEPLOYMENT")
+        or os.environ.get("OPENAI_CHAT_DEPLOYMENT_NAME")
+        or "gpt-4o-mini"
+    )
+    embedding_deployment = (
+        os.environ.get("AZURE_OPENAI_EMBEDDING_DEPLOYMENT")
+        or os.environ.get("OPENAI_EMBEDDING_DEPLOYMENT_NAME")
+        or "text-embedding-3-small"
+    )
+
+    cosmos_key = os.environ.get("COSMOSDB_KEY") or None
+
+    cosmos_container = os.environ.get("COSMOS_MEMORIES_CONTAINER") or "memories"
+    cosmos_turns_container = os.environ.get("COSMOS_TURNS_CONTAINER") or "memories_turns"
+    cosmos_summaries_container = (
+        os.environ.get("COSMOS_SUMMARIES_CONTAINER") or "memories_summaries"
+    )
+    cosmos_counter_container = os.environ.get("COSMOS_COUNTER_CONTAINER") or "counter"
+
+    client_kwargs = dict(
+        cosmos_endpoint=cosmos_endpoint,
+        cosmos_database=cosmos_database,
+        cosmos_container=cosmos_container,
+        cosmos_turns_container=cosmos_turns_container,
+        cosmos_summaries_container=cosmos_summaries_container,
+        cosmos_counter_container=cosmos_counter_container,
+        ai_foundry_endpoint=ai_foundry_endpoint,
+        chat_deployment_name=chat_deployment,
+        embedding_deployment_name=embedding_deployment,
+    )
+    if cosmos_key:
+        client_kwargs["cosmos_key"] = cosmos_key
+
+    client = AsyncCosmosMemoryClient(**client_kwargs)
+    await client.connect_cosmos()
+    return client
+
+
+async def get_memory_client() -> AsyncCosmosMemoryClient:
+    """Return the process-wide connected Cosmos memory client."""
+    global _client
+
+    if _client is None:
+        async with _init_lock:
+            if _client is None:
+                try:
+                    _client = await _create_memory_client()
+                except Exception as exc:  # noqa: BLE001
+                    raise RuntimeError(
+                        f"azure-cosmos-agent-memory failed to connect: {exc}"
+                    ) from exc
+    return _client
+```
+</details>
+
+<details>
     <summary>Completed code for <strong>src/app/prompts/supervisor.prompty</strong></summary>
 
 <br>
@@ -2127,6 +2247,53 @@ Action: call `find_places(city="Tokyo", aspects=["hotel", "activity", "dining"],
 User: "Hi, I'm planning a trip to Tokyo"
 Action: do NOT call any tool. Reply with a brief acknowledgement and ONE focused question to surface what they actually want help with first, e.g., "Sounds great — Tokyo's a fantastic choice! What would you like to start with: a place to stay, things to do, restaurants, or a full day-by-day plan? Any dates in mind?"
 
+```
+
+</details>
+
+<details>
+    <summary>Completed code for <strong>src/app/prompts/itinerary_agent.prompty</strong></summary>
+
+<br>
+
+```text
+---
+name: Itinerary Agent
+description: ReAct sub-agent that composes day-by-day trip itineraries and persists them via MCP.
+authors:
+  - Travel Assistant Team
+model:
+  api: chat
+  configuration:
+    type: azure_openai
+---
+
+system:
+You are the itinerary specialist for a travel-planning supervisor.
+
+You receive a single JSON payload that describes a destination, the requested length (days), the traveller's constraints, optional dates and notes, and (most importantly) a dictionary of `selected_places` that the supervisor already filtered for this trip.
+
+## Your job
+
+1. Read the payload. If `trip_id` is present, call `get_trip_details` first so you understand what already exists before editing.
+2. Build a balanced day-by-day plan using **only** the places in `selected_places`. Each day should have:
+   - one or two activities
+   - lunch and dinner (when dining places are provided)
+   - travel-time-aware ordering (no zig-zagging across the city)
+3. Persist the itinerary:
+   - call `create_new_trip` if `trip_id` is missing
+   - call `update_trip` if `trip_id` is present
+4. Return a concise human-readable summary of what you saved: destination, dates (if known), total days, and the first thing the traveller will do on day 1.
+
+## Rules
+
+- Never invent a place that isn't in `selected_places`. If you need more options, say so in the summary so the supervisor can re-dispatch `find_places`.
+- Always slot the hotel into every day; don't move the traveller mid-trip unless the constraints explicitly say so.
+- Respect all `constraints.dietary` and `constraints.accessibility` — never schedule a place that violates them.
+- Issue exactly one persistence call (`create_new_trip` *or* `update_trip`), then return the summary.
+
+user:
+{{input}}
 ```
 
 </details>
