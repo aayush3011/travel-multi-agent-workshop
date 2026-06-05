@@ -312,7 +312,7 @@ In the `travel_agents.py` file, navigate to the `# setup the supervisor agent` c
 Replace the comment with the following:
 
 ```python
-async def setup_agents() -> None:
+async def setup_agents(checkpointer=None) -> None:
     """Initialize the supervisor on a single persistent MCP session."""
     global _mcp_session_tools, supervisor_agent
 
@@ -334,7 +334,7 @@ async def setup_agents() -> None:
         model,
         tools=_mcp_session_tools,
         prompt_text=load_prompt("supervisor"),
-        checkpointer=MemorySaver(),
+        checkpointer=checkpointer or MemorySaver(),
     )
 
     logger.info("✅ Supervisor agent created successfully")
@@ -1211,7 +1211,7 @@ async def _connect_to_mcp() -> list[Any]:
 
 
 # setup the supervisor agent
-async def setup_agents() -> None:
+async def setup_agents(checkpointer=None) -> None:
     """Initialize the supervisor on a single persistent MCP session."""
     global _mcp_session_tools, supervisor_agent
 
@@ -1233,7 +1233,7 @@ async def setup_agents() -> None:
         model,
         tools=_mcp_session_tools,
         prompt_text=load_prompt("supervisor"),
-        checkpointer=MemorySaver(),
+        checkpointer=checkpointer or MemorySaver(),
     )
 
     logger.info("✅ Supervisor agent created successfully")
