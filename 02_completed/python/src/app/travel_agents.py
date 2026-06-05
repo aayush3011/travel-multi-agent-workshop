@@ -268,10 +268,9 @@ _mcp_session_tools: list[Any] = []
 _mcp_find_places_tools: list[Any] = []
 _mcp_itinerary_tools: list[Any] = []
 
-# Raw MCP recall_memories tools (list returned by filter_tools_by_prefix), wrapped
-# by recall_memories_tool below so the supervisor LLM never has to know or pass
-# user_id / tenant_id.
-_mcp_recall_memories_tool: list[Any] = []
+# Raw MCP recall_memories tool, wrapped by recall_memories_tool below so the
+# supervisor LLM never has to know or pass user_id / tenant_id.
+_mcp_recall_memories_tool: Any | None = None
 
 # Global agent variables
 _find_places_agent: Any | None = None
@@ -413,15 +412,15 @@ class RecallMemoriesInput(BaseModel):
         ),
     )
     top_k: int = Field(
-        default=5,
-        description="Maximum number of memory records to return (1-10).",
+        default=10,
+        description="Maximum number of memory records to return (1-15).",
     )
 
 
 @tool("recall_memories", args_schema=RecallMemoriesInput)
 async def recall_memories_tool(
     query: str,
-    top_k: int = 5,
+    top_k: int = 10,
     config: RunnableConfig = None,
 ) -> str:
     """Search the current traveller's stored long-term memories (facts, episodic events,
@@ -436,12 +435,12 @@ async def recall_memories_tool(
     if not user_id:
         return json.dumps({"error": "no user_id in runtime config"})
 
-    if not _mcp_recall_memories_tool:
+    if _mcp_recall_memories_tool is None:
         return json.dumps({"error": "recall_memories MCP tool not loaded"})
 
-    bounded_top_k = max(1, min(int(top_k or 5), 10))
+    bounded_top_k = max(1, min(int(top_k or 10), 15))
     try:
-        return await _mcp_recall_memories_tool[0].ainvoke(
+        return await _mcp_recall_memories_tool.ainvoke(
             {"user_id": str(user_id), "query": query, "top_k": bounded_top_k},
             config=_subagent_config(effective_config, "recall_memories"),
         )
@@ -574,9 +573,7 @@ async def setup_agents(checkpointer=None):
         all_tools,
         ["create_session", "get_session_context", "append_turn", "add_turn"],
     )
-    _mcp_recall_memories_tool = filter_tools_by_prefix(
-        all_tools, ["recall_memories"]
-    )
+    _mcp_recall_memories_tool = filter_tools_by_prefix(all_tools, ["recall_memories"])
     _mcp_find_places_tools = _with_preference_vector_injection(
         filter_tools_by_prefix(
             all_tools,

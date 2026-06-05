@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 from datetime import datetime
 from fastapi import BackgroundTasks, HTTPException, Body, Response
 from fastapi.responses import StreamingResponse
-from langchain_core.messages import HumanMessage, ToolMessage, AIMessage, SystemMessage
+from langchain_core.messages import HumanMessage, ToolMessage, AIMessage
 from pydantic import BaseModel
 from typing import List, Dict, Optional, Any, AsyncIterator
 from enum import Enum
@@ -55,11 +55,25 @@ from src.app.travel_agents import (
     _current_user_preference_vector,
 )
 from src.app.services.agent_memory import get_memory_client
-from src.app.services.user_summary_cache import get_cached_user_summary, invalidate_user_summary
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Quiet down chatty libraries so the workshop logs stay readable
+for noisy in (
+    "azure.core.pipeline.policies.http_logging_policy",
+    "azure.identity",
+    "azure.cosmos",
+    "httpx",
+    "httpcore",
+    "mcp",
+    "sse_starlette.sse",
+    "openai._base_client",
+    "urllib3.connectionpool",
+    "langsmith.client",
+):
+    logging.getLogger(noisy).setLevel(logging.WARNING)
 
 # Load environment variables
 load_dotenv(override=False)
@@ -447,95 +461,27 @@ async def _load_checkpoint_history(config: dict) -> list:
     return _extract_checkpoint_messages(checkpoints[-1])
 
 
-async def _recall_memory_context(
-    client: Any,
-    user_id: str,
-    query: str,
-    top_k: int = 5,
-) -> str:
-    """Pre-fetch durable memories relevant to the user's current message.
+async def _fetch_user_preference_vector(client: Any, user_id: str) -> list[float] | None:
+    """Fetch the user_summary embedding for preference-vector biasing in discover_places.
 
-    Returns a compact bullet list of fact / episodic / procedural memories that the
-    supervisor can read as authoritative context for this turn. Excludes raw 'turn'
-    records (they're noisy and already covered by checkpoint history). Empty string
-    on no hits or any error -- this path must never break the chat request.
+    Returns None when the user has no summary yet, the summary lacks an embedding,
+    or any error occurs -- preference biasing is best-effort, never a request blocker.
     """
-    if not user_id or not query:
-        return ""
+    if not user_id:
+        return None
     try:
-        hits = await client.search_cosmos(
-            search_terms=query,
-            user_id=user_id,
-            hybrid_search=True,
-            top_k=top_k,
-            memory_types=["fact", "episodic", "procedural"],
-        )
+        summary = await client.get_user_summary(user_id)
     except Exception as exc:
-        logger.warning(
-            "recall pre-fetch failed for user=%s query=%r: %s",
-            user_id, query, exc,
-        )
-        return ""
-    if not hits:
-        return ""
-
-    lines: list[str] = []
-    for hit in hits:
-        content = (hit.get("content") or "").strip()
-        if not content:
-            continue
-        mtype = hit.get("type") or hit.get("memory_type") or "memory"
-        tag_parts: list[str] = [str(mtype)]
-        if mtype == "episodic":
-            metadata = hit.get("metadata") or {}
-            scope_type = (metadata.get("scope_type") or "").strip()
-            scope_value = (metadata.get("scope_value") or "").strip()
-            if scope_type and scope_value:
-                tag_parts.append(f"scope: {scope_type}={scope_value}")
-        salience = hit.get("salience")
-        if isinstance(salience, (int, float)):
-            tag_parts.append(f"salience {salience:.2f}")
-        lines.append(f"- [{', '.join(tag_parts)}] {content}")
-    return "\n".join(lines)
-
-
-async def _build_initial_messages(
-    user_id: str,
-    user_message: str,
-    history_messages: Optional[list] = None,
-    client: Any | None = None,
-) -> tuple[list, list[float] | None]:
-    memory_client = client or await get_memory_client()
-    summary_doc, memory_context = await asyncio.gather(
-        get_cached_user_summary(memory_client, user_id),
-        _recall_memory_context(memory_client, user_id, user_message),
-    )
-    summary_text = (summary_doc or {}).get("content") or ""
-    pref_vector = (summary_doc or {}).get("embedding")
-    if not isinstance(pref_vector, list):
-        pref_vector = None
-
-    messages: list[Any] = []
-    if summary_text:
-        messages.append(SystemMessage(
-            content=(
-                "## What we know about this traveller\n"
-                + summary_text
-            ),
-            id="user_summary",
-        ))
-    if memory_context:
-        messages.append(SystemMessage(
-            content=(
-                "## Relevant memories for this request\n"
-                + memory_context
-            ),
-            id="recalled_memories",
-        ))
-    if history_messages:
-        messages.extend(history_messages)
-    messages.append(HumanMessage(content=user_message))
-    return messages, pref_vector
+        logger.warning("user_summary lookup failed for user=%s: %s", user_id, exc)
+        return None
+    if summary is None:
+        return None
+    if isinstance(summary, list):
+        if not summary:
+            return None
+        summary = summary[0]
+    embedding = summary.get("embedding") if isinstance(summary, dict) else None
+    return embedding if isinstance(embedding, list) else None
 
 
 def _thread_config(tenant_id: str, user_id: str, thread_id: str, pref_vector: list[float] | None = None) -> dict:
@@ -571,8 +517,6 @@ async def _flush_memory_bg(client: Any, user_id: str, thread_id: str):
             thread_id,
             exc,
         )
-    finally:
-        invalidate_user_summary(user_id)
 
 
 def _build_message_model(
@@ -1018,7 +962,8 @@ def extract_relevant_messages(
     response_data: List[Dict],
     tenantId: str,
     userId: str,
-    sessionId: str
+    sessionId: str,
+    user_message_text: str = ""
 ) -> List[tuple]:
     """Extract user and assistant messages from response data. Returns tuples of (MessageModel, original_message)"""
     
@@ -1044,46 +989,36 @@ def extract_relevant_messages(
     if not last_agent_node:
         return []
     
-    # Extract messages
+    # Collect messages emitted across every update so we can pick the final reply
+    # even when an intermediate update (e.g., a tool call) is the "last" node.
     messages = []
-    for key, value in last_agent_node.items():
-        if isinstance(value, dict) and "messages" in value:
-            messages.extend(value["messages"])
+    for update in response_data:
+        if not isinstance(update, dict):
+            continue
+        for value in update.values():
+            if isinstance(value, dict) and "messages" in value:
+                messages.extend(value["messages"])
     
-    # Find last user message index
-    last_user_index = -1
-    for i in range(len(messages) - 1, -1, -1):
-        if isinstance(messages[i], HumanMessage):
-            last_user_index = i
-            break
+    # With stream_mode="updates" the HumanMessage isn't in any per-node delta,
+    # so synthesize it from the request body so the UI can render the turn.
+    user_msg = HumanMessage(content=user_message_text) if user_message_text else None
     
-    if last_user_index == -1:
-        return []
-    
-    # Get messages after last user message
-    messages_after_user = messages[last_user_index:]
-    
-    # Filter: Only keep the last user message and the LAST assistant message (not all intermediate ones)
-    filtered_messages = []
-    
-    # Add user message
-    for msg in messages_after_user:
-        if isinstance(msg, HumanMessage):
-            filtered_messages.append(msg)
-            break
-    
-    # Find and add only the LAST assistant message (skip intermediates and tool messages)
+    # Find the last assistant message that has real content (skip tool-only AIMessages).
     last_assistant_msg = None
-    for i in range(len(messages_after_user) - 1, -1, -1):
-        msg = messages_after_user[i]
+    for msg in reversed(messages):
         if isinstance(msg, AIMessage) and not isinstance(msg, ToolMessage):
-            # Make sure it has actual content
-            if hasattr(msg, "content") and msg.content and msg.content.strip():
+            if hasattr(msg, "content") and msg.content and str(msg.content).strip():
                 last_assistant_msg = msg
                 break
     
-    if last_assistant_msg:
+    filtered_messages = []
+    if user_msg is not None:
+        filtered_messages.append(user_msg)
+    if last_assistant_msg is not None:
         filtered_messages.append(last_assistant_msg)
+    
+    if not filtered_messages:
+        return []
     
     # Convert to MessageModel and keep original message
     mapped_agent = agent_mapping.get(last_agent_name, last_agent_name.title())
@@ -1208,12 +1143,9 @@ async def chat_event_generator(
 
     base_config = _thread_config(tenant_id, user_id, thread_id)
     checkpoint_history = trim_history(await _load_checkpoint_history(base_config))
-    messages, pref_vector = await _build_initial_messages(
-        user_id,
-        user_message,
-        history_messages=checkpoint_history,
-        client=client,
-    )
+    pref_vector = await _fetch_user_preference_vector(client, user_id)
+    messages: list[Any] = list(checkpoint_history)
+    messages.append(HumanMessage(content=user_message))
     config = _thread_config(tenant_id, user_id, thread_id, pref_vector)
 
     client.add_local(
@@ -1638,11 +1570,16 @@ async def delete_memory(user_id: str, memory_id: str, thread_id: Optional[str] =
     description="Retrieve the latest toolkit-generated cross-thread user summary",
     response_model=Optional[Dict[str, Any]]
 )
-async def get_user_summary_endpoint(user_id: str):
+async def get_user_summary(user_id: str):
     """Get the latest toolkit-backed user summary, or null if absent."""
     try:
         client = await get_memory_client()
-        return await get_cached_user_summary(client, user_id)
+        summary = await client.get_user_summary(user_id)
+        if summary is None:
+            return None
+        if isinstance(summary, list):
+            return summary[0] if summary else None
+        return summary
     except Exception as e:
         logger.error(f"Error fetching user summary: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to fetch user summary: {str(e)}")
